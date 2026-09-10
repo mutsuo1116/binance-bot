@@ -1,163 +1,169 @@
 import os
+import time
 import requests
-from flask import Flask, request, jsonify
+import pandas as pd
+import numpy as np
+from threading import Thread
+from flask import Flask, jsonify
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
 app = Flask(__name__)
 
+# Конфигурация
 BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.environ.get('BINANCE_SECRET_KEY')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+
+SYMBOL = 'BTCUSDT'
+TIMEFRAME = Client.KLINE_INTERVAL_10MINUTE
+LEVERAGE = 3
+QUANTITY = 0.001  # Размер позиции в BTC
 
 binance_client = None
 if BINANCE_API_KEY and BINANCE_SECRET_KEY:
     try:
         binance_client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
     except Exception as e:
-        print(f"Ошибка инициализации Binance API: {e}")
+        print(f"Ошибка инициализации Binance: {e}")
 
 def send_telegram(text):
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
         try:
-            requests.post(url, json=payload, timeout=5)
+            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=5)
         except Exception as e:
-            print(f"Ошибка отправки в Telegram: {e}")
+            print(f"Ошибка Telegram: {e}")
+
+def get_klines_df():
+    """Загрузка исторических свечей и расчет индикаторов"""
+    klines = binance_client.futures_klines(symbol=SYMBOL, interval=TIMEFRAME, limit=250)
+    df = pd.DataFrame(klines, columns=[
+        'timestamp', 'open', 'high', 'low', 'close', 'volume',
+        'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
+    ])
+    df['close'] = df['close'].astype(float)
+    df['high'] = df['high'].astype(float)
+    df['low'] = df['low'].astype(float)
+    df['volume'] = df['volume'].astype(float)
+
+    # Расчет EMA
+    df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
+    df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
+    df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
+
+    # Расчет RSI
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+
+    # Расчет ATR (Волатильность)
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    df['atr'] = true_range.rolling(14).mean()
+
+    # Объемная скользящая
+    df['vol_ma'] = df['volume'].rolling(20).mean()
+
+    return df
+
+def execute_trade(action, entry_price, atr):
+    """Исполнение ордера с динамическими SL/TP по ATR"""
+    try:
+        binance_client.futures_change_margin_type(symbol=SYMBOL, marginType='ISOLATED')
+    except BinanceAPIException as e:
+        if e.code != -4046:
+            pass
+
+    binance_client.futures_change_leverage(symbol=SYMBOL, leverage=LEVERAGE)
+
+    # Рыночный ордер
+    order = binance_client.futures_create_order(
+        symbol=SYMBOL, side=action, type='MARKET', quantity=QUANTITY
+    )
+
+    # Динамический расчет SL (1.5x ATR) и TP (3.0x ATR)
+    sl_dist = atr * 1.5
+    tp_dist = atr * 3.0
+
+    if action == 'BUY':
+        sl_price = round(entry_price - sl_dist, 1)
+        tp_price = round(entry_price + tp_dist, 1)
+        side_close = 'SELL'
+    else:
+        sl_price = round(entry_price + sl_dist, 1)
+        tp_price = round(entry_price - tp_dist, 1)
+        side_close = 'BUY'
+
+    # Выставление SL и TP
+    binance_client.futures_create_order(
+        symbol=SYMBOL, side=side_close, type='STOP_MARKET', stopPrice=sl_price, closePosition=True
+    )
+    binance_client.futures_create_order(
+        symbol=SYMBOL, side=side_close, type='TAKE_PROFIT_MARKET', stopPrice=tp_price, closePosition=True
+    )
+
+    send_telegram(
+        f"🤖 АВТО-СДЕЛКА ОТКРЫТА ({action})\n"
+        f"Пара: {SYMBOL}\n"
+        f"Вход: {entry_price}\n"
+        f"Стоп-Лосс (1.5x ATR): {sl_price}\n"
+        f"Тейк-Профит (3.0x ATR): {tp_price}"
+    )
+
+def market_analyzer_loop():
+    """Фоновый цикл проверки рынка каждые 10 минут"""
+    while True:
+        try:
+            if binance_client:
+                df = get_klines_df()
+                last = df.iloc[-2]      # Последняя закрытая свеча
+                prev = df.iloc[-3]      # Предпоследняя свеча
+
+                # Проверка наличия открытых позиций
+                positions = binance_client.futures_position_information(symbol=SYMBOL)
+                has_position = float(positions[0]['positionAmt']) != 0
+
+                if not has_position:
+                    # Условия LONG: Тренд бычий + Пересечение EMA9/21 вверх + RSI < 68 + Объем выше среднего
+                    long_cond = (
+                        (last['close'] > last['ema200']) and
+                        (prev['ema9'] <= prev['ema21']) and (last['ema9'] > last['ema21']) and
+                        (last['rsi'] < 68) and
+                        (last['volume'] > last['vol_ma'])
+                    )
+
+                    # Условия SHORT: Тренд медвежий + Пересечение EMA9/21 вниз + RSI > 32 + Объем выше среднего
+                    short_cond = (
+                        (last['close'] < last['ema200']) and
+                        (prev['ema9'] >= prev['ema21']) and (last['ema9'] < last['ema21']) and
+                        (last['rsi'] > 32) and
+                        (last['volume'] > last['vol_ma'])
+                    )
+
+                    if long_cond:
+                        execute_trade('BUY', last['close'], last['atr'])
+                    elif short_cond:
+                        execute_trade('SELL', last['close'], last['atr'])
+
+        except Exception as e:
+            print(f"Ошибка в цикле анализа: {e}")
+
+        time.sleep(600)  # Пауза 10 минут (600 сек)
+
+# Запуск анализатора в отдельном потоке
+Thread(target=market_analyzer_loop, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "OK", 200
-
-@app.route('/test')
-def test_tg():
-    send_telegram("🛡️ ТЕСТ СВЯЗИ: Бот готов к работе с процентами SL/TP.")
-    return "OK", 200
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.get_json(force=True, silent=True) or {}
-    
-    action = str(data.get('action', '')).upper()
-    symbol = str(data.get('symbol', 'BTCUSDT')).upper()
-    raw_qty = data.get('quantity')
-    raw_leverage = data.get('leverage', 3)
-    sl_pct = data.get('sl_pct')  # Процент Стоп-Лосса (например, 1.5)
-    tp_pct = data.get('tp_pct')  # Процент Тейк-Профита (например, 3.0)
-
-    if not action or action not in ['BUY', 'SELL']:
-        return jsonify({"status": "error", "message": "Параметр action должен быть BUY или SELL"}), 400
-
-    if raw_qty is None:
-        return jsonify({"status": "error", "message": "Не указано quantity"}), 400
-
-    try:
-        quantity = float(raw_qty)
-    except (ValueError, TypeError):
-        return jsonify({"status": "error", "message": "Некорректный числовой формат quantity"}), 400
-
-    try:
-        leverage = max(1, min(int(raw_leverage), 5))
-    except (ValueError, TypeError):
-        leverage = 3
-
-    if not binance_client:
-        send_telegram("⚠️ Ошибка: Ключи Binance API не найдены в настройках Render!")
-        return jsonify({"status": "error", "message": "Binance client missing"}), 500
-
-    try:
-        # 1. Установка изолированной маржи
-        try:
-            binance_client.futures_change_margin_type(symbol=symbol, marginType='ISOLATED')
-        except BinanceAPIException as e:
-            if e.code != -4046:
-                print(f"Маржа: {e.message}")
-
-        # 2. Установка плеча
-        binance_client.futures_change_leverage(symbol=symbol, leverage=leverage)
-
-        # 3. Выполнение рыночного ордера
-        order = binance_client.futures_create_order(
-            symbol=symbol,
-            side=action,
-            type='MARKET',
-            quantity=quantity
-        )
-
-        # Текущая цена для расчета SL/TP
-        ticker = binance_client.futures_symbol_ticker(symbol=symbol)
-        entry_price = float(ticker['price'])
-
-        sl_info = "Без SL"
-        tp_info = "Без TP"
-
-        # 4. Расчет и выставление Стоп-Лосса (%)
-        if sl_pct is not None:
-            try:
-                sl_percent = float(sl_pct)
-                if action == 'BUY':
-                    sl_price = entry_price * (1 - sl_percent / 100)
-                else:
-                    sl_price = entry_price * (1 + sl_percent / 100)
-                
-                sl_price = round(sl_price, 1 if 'BTC' in symbol else 2)
-                sl_side = 'SELL' if action == 'BUY' else 'BUY'
-
-                binance_client.futures_create_order(
-                    symbol=symbol,
-                    side=sl_side,
-                    type='STOP_MARKET',
-                    stopPrice=sl_price,
-                    closePosition=True
-                )
-                sl_info = f"{sl_price} (-{sl_percent}%)"
-            except Exception as sl_err:
-                sl_info = f"Ошибка SL: {sl_err}"
-
-        # 5. Расчет и выставление Тейк-Профита (%)
-        if tp_pct is not None:
-            try:
-                tp_percent = float(tp_pct)
-                if action == 'BUY':
-                    tp_price = entry_price * (1 + tp_percent / 100)
-                else:
-                    tp_price = entry_price * (1 - tp_percent / 100)
-                
-                tp_price = round(tp_price, 1 if 'BTC' in symbol else 2)
-                tp_side = 'SELL' if action == 'BUY' else 'BUY'
-
-                binance_client.futures_create_order(
-                    symbol=symbol,
-                    side=tp_side,
-                    type='TAKE_PROFIT_MARKET',
-                    stopPrice=tp_price,
-                    closePosition=True
-                )
-                tp_info = f"{tp_price} (+{tp_percent}%)"
-            except Exception as tp_err:
-                tp_info = f"Ошибка TP: {tp_err}"
-
-        # Отправка отчета в Telegram
-        send_telegram(
-            f"🛡️ СДЕЛКА ОТКРЫТА\n"
-            f"Направление: {action}\n"
-            f"Пара: {symbol}\n"
-            f"Цена входа: ~{entry_price}\n"
-            f"Объем: {quantity}\n"
-            f"Плечо: {leverage}x (Isolated)\n"
-            f"Стоп-Лосс: {sl_info}\n"
-            f"Тейк-Профит: {tp_info}"
-        )
-
-        return jsonify({"status": "success", "order": order}), 200
-
-    except Exception as e:
-        error_msg = str(e)
-        send_telegram(f"❌ ОШИБКА ИСПОЛНЕНИЯ ОРДЕРА\nПара: {symbol}\nПричина: {error_msg}")
-        return jsonify({"status": "error", "message": error_msg}), 500
+    return "Многофакторный бот активен и анализирует рынок.", 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)                            
+    app.run(host='0.0.0.0', port=port)
