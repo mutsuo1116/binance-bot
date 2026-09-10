@@ -93,8 +93,8 @@ def webhook():
             quantity=quantity
         )
 
-        # 4. Выставление защитного Стоп-Лосса (если указан 'sl')
-        sl_info = "Без Стоп-Лосса"
+                # 4. Выставление защитного Стоп-Лосса (SL)
+        sl_info = "Без SL"
         if stop_loss_price:
             try:
                 sl_price = float(stop_loss_price)
@@ -108,7 +108,25 @@ def webhook():
                 )
                 sl_info = f"{sl_price}"
             except Exception as sl_err:
-                sl_info = f"Ошибка установки SL: {sl_err}"
+                sl_info = f"Ошибка SL: {sl_err}"
+
+        # 5. Выставление Тейк-Профита (TP)
+        tp_info = "Без TP"
+        take_profit_price = data.get('tp')
+        if take_profit_price:
+            try:
+                tp_price = float(take_profit_price)
+                tp_side = 'SELL' if action == 'BUY' else 'BUY'
+                binance_client.futures_create_order(
+                    symbol=symbol,
+                    side=tp_side,
+                    type='TAKE_PROFIT_MARKET',
+                    stopPrice=tp_price,
+                    closePosition=True
+                )
+                tp_info = f"{tp_price}"
+            except Exception as tp_err:
+                tp_info = f"Ошибка TP: {tp_err}"
 
         # Отправка отчета в Telegram
         send_telegram(
@@ -117,7 +135,8 @@ def webhook():
             f"Пара: {symbol}\n"
             f"Объем: {quantity}\n"
             f"Плечо: {leverage}x (Isolated)\n"
-            f"Стоп-Лосс: {sl_info}"
+            f"Стоп-Лосс: {sl_info}\n"
+            f"Тейк-Профит: {tp_info}"
         )
 
         return jsonify({"status": "success", "order": order}), 200
