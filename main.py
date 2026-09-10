@@ -27,8 +27,9 @@ binance_client = None
 if BINANCE_API_KEY and BINANCE_SECRET_KEY:
     try:
         binance_client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
+        print("✅ Клиент Binance успешно инициализирован.")
     except Exception as e:
-        print(f"Ошибка инициализации Binance: {e}")
+        print(f"❌ Ошибка инициализации Binance: {e}")
 
 def send_telegram(text):
     """Отправка сообщений в Telegram"""
@@ -37,10 +38,10 @@ def send_telegram(text):
         try:
             requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=5)
         except Exception as e:
-            print(f"Ошибка Telegram: {e}")
+            print(f"❌ Ошибка Telegram: {e}")
 
 def get_klines_df():
-    """Загрузка исторических свечей и расчет всех 4 факторов"""
+    """Загрузка исторических свечей и расчет всех факторов"""
     klines = binance_client.futures_klines(symbol=SYMBOL, interval=TIMEFRAME, limit=250)
     df = pd.DataFrame(klines, columns=[
         'timestamp', 'open', 'high', 'low', 'close', 'volume',
@@ -118,20 +119,27 @@ def execute_trade(action, entry_price, atr):
     )
 
 def market_analyzer_loop():
-    """Фоновый цикл проверки рынка каждые 15 минут"""
-    time.sleep(10)  # Даем веб-серверу спокойно стартовать и ответить Railway
+    """Фоновый цикл проверки рынка каждые 15 минут с подробными логами"""
+    time.sleep(10)  # Даем веб-серверу спокойно стартовать
+    print("🚀 Фоновый цикл анализа рынка запущен!")
+    
     while True:
         try:
             if binance_client:
+                print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] 🔍 Запрос данных по {SYMBOL} с Binance...")
                 df = get_klines_df()
                 last = df.iloc[-2]
                 prev = df.iloc[-3]
 
+                print(f"📊 Цена закрытия: {last['close']} | EMA200: {round(last['ema200'], 2)} | RSI: {round(last['rsi'], 2)}")
+
+                # Проверяем открытые позиции
                 positions = binance_client.futures_position_information(symbol=SYMBOL)
                 has_position = False
                 for p in positions:
                     if p['symbol'] == SYMBOL and float(p['positionAmt']) != 0:
                         has_position = True
+                        print(f"⚠️ Уже есть активная позиция по {SYMBOL}: {p['positionAmt']} монет. Ждем закрытия.")
                         break
 
                 if not has_position:
@@ -150,13 +158,18 @@ def market_analyzer_loop():
                     )
 
                     if long_cond:
+                        print("🟢 УСЛОВИЯ LONG ВЫПОЛНЕНЫ! Открываем сделку...")
                         execute_trade('BUY', last['close'], last['atr'])
                     elif short_cond:
+                        print("🔴 УСЛОВИЯ SHORT ВЫПОЛНЕНЫ! Открываем сделку...")
                         execute_trade('SELL', last['close'], last['atr'])
+                    else:
+                        print("⏳ Условия входа не выполнены. Рынок в флэте/не подходит под стратегию, ждем следующий бар.")
 
         except Exception as e:
-            print(f"Ошибка в цикле анализа рынка: {e}")
+            print(f"❌ Ошибка в цикле анализа рынка: {e}")
 
+        # Пауза 15 минут перед следующим сканированием
         time.sleep(900)
 
 # Запуск фонового потока
