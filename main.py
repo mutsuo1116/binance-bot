@@ -2,90 +2,129 @@ import os
 import requests
 from flask import Flask, request, jsonify
 from binance.client import Client
+from binance.exceptions import BinanceAPIException
 
 app = Flask(__name__)
 
-# Загрузка переменных окружения из Render
+# Загрузка конфигурации из Environment Variables
 BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.environ.get('BINANCE_SECRET_KEY')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-# Инициализация клиента Binance
+# Инициализация API клиента
 binance_client = None
 if BINANCE_API_KEY and BINANCE_SECRET_KEY:
     try:
         binance_client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
     except Exception as e:
-        print(f"Ошибка инициализации Binance: {e}")
+        print(f"Ошибка инициализации Binance API: {e}")
 
 def send_telegram(text):
-    """Отправка уведомления в Telegram"""
+    """Надежная отправка уведомлений без сбоев форматирования"""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
         try:
             requests.post(url, json=payload, timeout=5)
         except Exception as e:
-            print(f"Ошибка отправки в ТГ: {e}")
+            print(f"Ошибка отправки в Telegram: {e}")
 
 @app.route('/')
 def home():
-    """Эндпоинт для работы cron-job.org"""
+    """Эндпоинт для поддержания активности через cron-job"""
     return "OK", 200
 
 @app.route('/test')
 def test_tg():
-    """Проверка работы Telegram-уведомлений"""
-    send_telegram("🔔 **Тест связи!** Бот успешно подключен к Telegram.")
-    return "Тестовое сообщение отправлено в Telegram!", 200
+    """Тест работы уведомлений"""
+    send_telegram("🛡️ ТЕСТ СВЯЗИ: Бот готов к безопасной торговле на Binance Futures.")
+    return "OK", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Прием сигналов от TradingView и исполнение ордеров"""
+    """Обработка вебхуков TradingView и исполнение фьючерсных ордеров"""
     data = request.get_json(force=True, silent=True) or {}
     
-    action = data.get('action')           # BUY или SELL
-    symbol = data.get('symbol', 'BTCUSDT') # Торговая пара
-    quantity = data.get('quantity')       # Количество монеты (например 0.001)
-    amount_usdt = data.get('amount_usdt') # Или сумма в USDT (например 10)
+    action = str(data.get('action', '')).upper()
+    symbol = str(data.get('symbol', 'BTCUSDT')).upper()
+    raw_qty = data.get('quantity')
+    raw_leverage = data.get('leverage', 3)
+    stop_loss_price = data.get('sl')
 
-    if not action:
-        return jsonify({"status": "error", "message": "Не указан action (BUY или SELL)"}), 400
+    # Валидация базовых входящих данных
+    if not action or action not in ['BUY', 'SELL']:
+        return jsonify({"status": "error", "message": "Параметр action должен быть BUY или SELL"}), 400
 
-    if not binance_client:
-        send_telegram("⚠️ **Внимание**: Сигнал получен, но API-ключи Binance не настроены на Render!")
-        return jsonify({"status": "error", "message": "Binance API keys missing"}), 500
+    if raw_qty is None:
+        return jsonify({"status": "error", "message": "Не указано quantity"}), 400
 
     try:
-        # ПОКУПКА (BUY)
-        if action.upper() == "BUY":
-            if amount_usdt:
-                # Покупка на конкретную сумму USDT (например, на 10$)
-                order = binance_client.order_market_buy(symbol=symbol, quoteOrderQty=amount_usdt)
-                send_telegram(f"🟢 **ПОКУПКА (SPOT)**\nПара: `{symbol}`\nСумма: `{amount_usdt} USDT`")
-            elif quantity:
-                # Покупка по точной сумме монет
-                order = binance_client.order_market_buy(symbol=symbol, quantity=quantity)
-                send_telegram(f"🟢 **ПОКУПКА (SPOT)**\nПара: `{symbol}`\nКоличество: `{quantity}`")
-            else:
-                return jsonify({"status": "error", "message": "Укажите quantity или amount_usdt"}), 400
+        quantity = float(raw_qty)
+    except (ValueError, TypeError):
+        return jsonify({"status": "error", "message": "Некорректный числовой формат quantity"}), 400
 
-        # ПРОДАЖА (SELL)
-        elif action.upper() == "SELL":
-            if quantity:
-                order = binance_client.order_market_sell(symbol=symbol, quantity=quantity)
-                send_telegram(f"🔴 **ПРОДАЖА (SPOT)**\nПара: `{symbol}`\nКоличество: `{quantity}`")
-            else:
-                return jsonify({"status": "error", "message": "Для продажи укажите quantity"}), 400
-        else:
-            return jsonify({"status": "error", "message": "Неверный action (только BUY или SELL)"}), 400
+    # Безопасное ограничение плеча (от 1x до 5x)
+    try:
+        leverage = max(1, min(int(raw_leverage), 5))
+    except (ValueError, TypeError):
+        leverage = 3
+
+    if not binance_client:
+        send_telegram("⚠️ Ошибка: Ключи Binance API не найдены в настройках Render!")
+        return jsonify({"status": "error", "message": "Binance client missing"}), 500
+
+    try:
+        # 1. Установка изолированной маржи для защиты баланса
+        try:
+            binance_client.futures_change_margin_type(symbol=symbol, marginType='ISOLATED')
+        except BinanceAPIException as e:
+            if e.code != -4046:  # Ошибка -4046 означает, что ISOLATED уже включена
+                print(f"Маржа: {e.message}")
+
+        # 2. Установка выбранного размера плеча
+        binance_client.futures_change_leverage(symbol=symbol, leverage=leverage)
+
+        # 3. Выполнение рыночного ордера (BUY / SELL)
+        order = binance_client.futures_create_order(
+            symbol=symbol,
+            side=action,
+            type='MARKET',
+            quantity=quantity
+        )
+
+        # 4. Выставление защитного Стоп-Лосса (если указан 'sl')
+        sl_info = "Без Стоп-Лосса"
+        if stop_loss_price:
+            try:
+                sl_price = float(stop_loss_price)
+                sl_side = 'SELL' if action == 'BUY' else 'BUY'
+                binance_client.futures_create_order(
+                    symbol=symbol,
+                    side=sl_side,
+                    type='STOP_MARKET',
+                    stopPrice=sl_price,
+                    closePosition=True
+                )
+                sl_info = f"{sl_price}"
+            except Exception as sl_err:
+                sl_info = f"Ошибка установки SL: {sl_err}"
+
+        # Отправка отчета в Telegram
+        send_telegram(
+            f"🛡️ СДЕЛКА ОТКРЫТА\n"
+            f"Направление: {action}\n"
+            f"Пара: {symbol}\n"
+            f"Объем: {quantity}\n"
+            f"Плечо: {leverage}x (Isolated)\n"
+            f"Стоп-Лосс: {sl_info}"
+        )
 
         return jsonify({"status": "success", "order": order}), 200
 
     except Exception as e:
         error_msg = str(e)
-        send_telegram(f"❌ **ОШИБКА СДЕЛКИ на Binance**\nПара: `{symbol}`\nПричина: `{error_msg}`")
+        send_telegram(f"❌ ОШИБКА ИСПОЛНЕНИЯ ОРДЕРА\nПара: {symbol}\nПричина: {error_msg}")
         return jsonify({"status": "error", "message": error_msg}), 500
 
 if __name__ == '__main__':
