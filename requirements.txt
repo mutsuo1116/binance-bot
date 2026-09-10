@@ -1,6 +1,6 @@
-Flask
-requests
+flask
 gunicorn
 python-binance
 pandas
 numpy
+requests
