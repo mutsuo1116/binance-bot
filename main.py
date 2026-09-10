@@ -18,9 +18,9 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 # Настройки стратегии
 SYMBOL = 'BTCUSDT'
-TIMEFRAME = Client.KLINE_INTERVAL_15MINUTE  # Официальный таймфрейм 15 минут
+TIMEFRAME = Client.KLINE_INTERVAL_15MINUTE
 LEVERAGE = 3
-QUANTITY = 0.001  # Размер позиции в BTC
+QUANTITY = 0.001
 
 # Инициализация клиента Binance
 binance_client = None
@@ -86,12 +86,10 @@ def execute_trade(action, entry_price, atr):
 
     binance_client.futures_change_leverage(symbol=SYMBOL, leverage=LEVERAGE)
 
-    # Рыночный ордер на вход
     order = binance_client.futures_create_order(
         symbol=SYMBOL, side=action, type='MARKET', quantity=QUANTITY
     )
 
-    # Динамический расчет SL (1.5x ATR) и TP (3.0x ATR)
     sl_dist = atr * 1.5
     tp_dist = atr * 3.0
 
@@ -104,7 +102,6 @@ def execute_trade(action, entry_price, atr):
         tp_price = round(entry_price - tp_dist, 1)
         side_close = 'BUY'
 
-    # Выставление Стоп-Лосса и Тейк-Профита на бирже
     binance_client.futures_create_order(
         symbol=SYMBOL, side=side_close, type='STOP_MARKET', stopPrice=sl_price, closePosition=True
     )
@@ -122,14 +119,14 @@ def execute_trade(action, entry_price, atr):
 
 def market_analyzer_loop():
     """Фоновый цикл проверки рынка каждые 15 минут"""
+    time.sleep(10)  # Даем веб-серверу спокойно стартовать и ответить Railway
     while True:
         try:
             if binance_client:
                 df = get_klines_df()
-                last = df.iloc[-2]      # Последняя закрытая свеча
-                prev = df.iloc[-3]      # Предпоследняя закрытая свеча
+                last = df.iloc[-2]
+                prev = df.iloc[-3]
 
-                # Проверка открытых позиций
                 positions = binance_client.futures_position_information(symbol=SYMBOL)
                 has_position = False
                 for p in positions:
@@ -138,7 +135,6 @@ def market_analyzer_loop():
                         break
 
                 if not has_position:
-                    # Условия LONG: Тренд бычий + Пересечение EMA9/21 вверх + RSI < 68 + Объем выше среднего
                     long_cond = (
                         (last['close'] > last['ema200']) and
                         (prev['ema9'] <= prev['ema21']) and (last['ema9'] > last['ema21']) and
@@ -146,7 +142,6 @@ def market_analyzer_loop():
                         (last['volume'] > last['vol_ma'])
                     )
 
-                    # Условия SHORT: Тренд медвежий + Пересечение EMA9/21 вниз + RSI > 32 + Объем выше среднего
                     short_cond = (
                         (last['close'] < last['ema200']) and
                         (prev['ema9'] >= prev['ema21']) and (last['ema9'] < last['ema21']) and
@@ -162,9 +157,9 @@ def market_analyzer_loop():
         except Exception as e:
             print(f"Ошибка в цикле анализа рынка: {e}")
 
-        time.sleep(900)  # Пауза 15 минут (900 секунд)
+        time.sleep(900)
 
-# Запуск аналитического потока
+# Запуск фонового потока
 Thread(target=market_analyzer_loop, daemon=True).start()
 
 @app.route('/')
