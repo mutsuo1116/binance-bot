@@ -10,56 +10,50 @@ from binance.exceptions import BinanceAPIException
 
 app = Flask(__name__)
 
-# Переменные окружения из Railway
 BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.environ.get('BINANCE_SECRET_KEY')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-SYMBOLS = [
-    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
-    'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 
-    'NEARUSDT', 'LINKUSDT'
-]
+# Топ ликвидных монет для 5m трейдинга
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'NEARUSDT']
 
-TIMEFRAME = Client.KLINE_INTERVAL_3MINUTE
-LEVERAGE = 5  # Плечо 5x
-MAX_ACTIVE_POSITIONS = 3  # Максимум 3 сделки
+TIMEFRAME = Client.KLINE_INTERVAL_5MINUTE
+LEVERAGE = 5  
+MAX_ACTIVE_POSITIONS = 2  # Не более 2 сделок одновременно
 
-# ИСПРАВЛЕННЫЕ ЛОТЫ: Полноценные позиции ~$50 на монету (Залог ~$10)
+# Позиции ~$25 на монету (залог ~$5)
 QUANTITIES = {
-    'BTCUSDT': 0.001,   # ~$60
-    'ETHUSDT': 0.02,    # ~$50
-    'SOLUSDT': 0.35,    # ~$49
-    'BNBUSDT': 0.09,    # ~$49
-    'XRPUSDT': 90.0,    # ~$49
-    'ADAUSDT': 140.0,   # ~$49
-    'DOGEUSDT': 500.0,  # ~$50
-    'AVAXUSDT': 2.0,    # ~$50
-    'NEARUSDT': 11.0,   # ~$49
-    'LINKUSDT': 4.5     # ~$49
+    'BTCUSDT': 0.0004,
+    'ETHUSDT': 0.01,
+    'SOLUSDT': 0.18,
+    'XRPUSDT': 45.0,
+    'DOGEUSDT': 250.0,
+    'NEARUSDT': 5.5
 }
 
 binance_client = None
 if BINANCE_API_KEY and BINANCE_SECRET_KEY:
     try:
         binance_client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-        print("✅ Binance API успешно подключен.")
+        print("✅ Binance API подключен.")
     except Exception as e:
-        print(f"❌ Ошибка подключения Binance: {e}")
+        print(f"❌ Ошибка Binance API: {e}")
 
 def send_telegram(text):
-    """Отправка сообщений в Telegram"""
+    """Надежная отправка в Telegram"""
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         try:
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=5)
+            res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=8)
+            if res.status_code != 200:
+                print(f"⚠️ Ошибка TG HTTP: {res.text}")
         except Exception as e:
-            print(f"❌ Ошибка Telegram: {e}")
+            print(f"❌ Ошибка отправки TG: {e}")
 
 def get_klines_df(symbol):
-    """Расчет скальперских индикаторов"""
-    klines = binance_client.futures_klines(symbol=symbol, interval=TIMEFRAME, limit=100)
+    """Загрузка свечей и расчет EMA200, EMA9, EMA21, Vol_SMA, ATR"""
+    klines = binance_client.futures_klines(symbol=symbol, interval=TIMEFRAME, limit=210)
     df = pd.DataFrame(klines, columns=[
         'timestamp', 'open', 'high', 'low', 'close', 'volume',
         'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
@@ -69,145 +63,143 @@ def get_klines_df(symbol):
     df['low'] = df['low'].astype(float)
     df['volume'] = df['volume'].astype(float)
 
-    # Скользящие средние EMA 7 и EMA 21
-    df['ema7'] = df['close'].ewm(span=7, adjust=False).mean()
+    # Индикаторы
+    df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
+    df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
+    df['vol_sma20'] = df['volume'].rolling(window=20).mean()
 
-    # RSI 14
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
-
-    # ATR 14
+    # ATR
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift())
     low_close = np.abs(df['low'] - df['low'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = np.max(ranges, axis=1)
-    df['atr'] = true_range.rolling(14).mean()
+    df['atr'] = np.max(ranges, axis=1).rolling(14).mean()
 
     return df
 
-def get_open_positions_dict():
-    """Проверка активных сделок"""
-    active_dict = {}
+def get_open_positions():
+    """Проверка открытых сделок"""
+    active = {}
     try:
         positions = binance_client.futures_position_information()
         for p in positions:
             amt = float(p['positionAmt'])
             if amt != 0:
-                active_dict[p['symbol']] = amt
+                active[p['symbol']] = amt
     except Exception as e:
         print(f"⚠️ Ошибка получения позиций: {e}")
-    return active_dict
+    return active
 
-def execute_scalp_trade(symbol, action, entry_price, atr):
-    """Исполнение скальп-ордера на ~$50"""
+def execute_smart_trade(symbol, action, entry_price, atr):
+    """Исполнение ордера с защищенной отправкой в TG"""
     qty = QUANTITIES.get(symbol, 1.0)
+    
     try:
-        binance_client.futures_change_margin_type(symbol=symbol, marginType='ISOLATED')
-    except BinanceAPIException:
-        pass
+        try:
+            binance_client.futures_change_margin_type(symbol=symbol, marginType='ISOLATED')
+        except BinanceAPIException:
+            pass
 
-    binance_client.futures_change_leverage(symbol=symbol, leverage=LEVERAGE)
+        binance_client.futures_change_leverage(symbol=symbol, leverage=LEVERAGE)
 
-    # Вход в сделку
-    binance_client.futures_create_order(
-        symbol=symbol, side=action, type='MARKET', quantity=qty
-    )
+        # 1. Основной ордер
+        binance_client.futures_create_order(
+            symbol=symbol, side=action, type='MARKET', quantity=qty
+        )
 
-    # Скальперские стоп и тейк
-    sl_dist = atr * 1.0
-    tp_dist = atr * 1.8
+        # Дистанции TP (2.5x ATR) / SL (1.2x ATR)
+        sl_dist = atr * 1.2
+        tp_dist = atr * 2.5
 
-    if action == 'BUY':
-        sl_price = round(entry_price - sl_dist, 4)
-        tp_price = round(entry_price + tp_dist, 4)
-        side_close = 'SELL'
-    else:
-        sl_price = round(entry_price + sl_dist, 4)
-        tp_price = round(entry_price - tp_dist, 4)
-        side_close = 'BUY'
+        if action == 'BUY':
+            sl_price = round(entry_price - sl_dist, 4)
+            tp_price = round(entry_price + tp_dist, 4)
+            side_close = 'SELL'
+        else:
+            sl_price = round(entry_price + sl_dist, 4)
+            tp_price = round(entry_price - tp_dist, 4)
+            side_close = 'BUY'
 
-    binance_client.futures_create_order(
-        symbol=symbol, side=side_close, type='STOP_MARKET', stopPrice=sl_price, closePosition=True
-    )
-    binance_client.futures_create_order(
-        symbol=symbol, side=side_close, type='TAKE_PROFIT_MARKET', stopPrice=tp_price, closePosition=True
-    )
+        # 2. Стоп и Тейк
+        binance_client.futures_create_order(
+            symbol=symbol, side=side_close, type='STOP_MARKET', stopPrice=sl_price, closePosition=True
+        )
+        binance_client.futures_create_order(
+            symbol=symbol, side=side_close, type='TAKE_PROFIT_MARKET', stopPrice=tp_price, closePosition=True
+        )
 
-    send_telegram(
-        f"⚡ СКАЛЬП-СДЕЛКА ({action} | 5x)\n"
-        f"Монета: {symbol} (3m)\n"
-        f"Объем: {qty} {symbol.replace('USDT','')}\n"
-        f"Вход: ~{entry_price}\n"
-        f"🎯 Take-Profit: {tp_price}\n"
-        f"🛡️ Stop-Loss: {sl_price}"
-    )
+        msg = (
+            f"🎯 УМНЫЙ ВХОД ({action} | 5x)\n"
+            f"Монета: {symbol} (5m)\n"
+            f"Объем: {qty}\n"
+            f"Вход: ~{entry_price}\n"
+            f"✅ Take-Profit: {tp_price}\n"
+            f"🛑 Stop-Loss: {sl_price}"
+        )
+        send_telegram(msg)
 
-def scalper_loop():
-    """Главный скальперский цикл"""
+    except Exception as err:
+        error_msg = f"❌ Ошибка открытия сделки по {symbol}: {err}"
+        print(error_msg)
+        send_telegram(error_msg)
+
+def bot_loop():
+    """Разумный цикл проверки сигналов"""
     time.sleep(5)
-    print("⚡ СКАЛЬПИНГ-БОТ ЗАПУЩЕН (Позиции ~$50)! Сканирование...")
+    send_telegram("🤖 Умный трендовый бот запущен (5m + EMA200)! Проверка связи OK.")
     
     while True:
         try:
             if binance_client:
-                print(f"\n⚡ [{time.strftime('%H:%M:%S')}] Сканирование микро-трендов...")
-                open_positions = get_open_positions_dict()
+                open_positions = get_open_positions()
                 total_active = len(open_positions)
-                print(f"💼 Активных позиций: {total_active}/{MAX_ACTIVE_POSITIONS}")
 
                 for symbol in SYMBOLS:
-                    try:
-                        if symbol in open_positions:
-                            continue
+                    if symbol in open_positions or total_active >= MAX_ACTIVE_POSITIONS:
+                        continue
 
-                        if total_active >= MAX_ACTIVE_POSITIONS:
-                            break
+                    df = get_klines_df(symbol)
+                    c2 = df.iloc[-2]  # Закрытая свеча
+                    c3 = df.iloc[-3]  # Предпоследняя
 
-                        df = get_klines_df(symbol)
-                        c2 = df.iloc[-2]
-                        c3 = df.iloc[-3]
+                    # 1. Сигнал пересечения EMA9 и EMA21
+                    cross_up = (c3['ema9'] <= c3['ema21']) and (c2['ema9'] > c2['ema21'])
+                    cross_down = (c3['ema9'] >= c3['ema21']) and (c2['ema9'] < c2['ema21'])
 
-                        cross_up = (c3['ema7'] <= c3['ema21']) and (c2['ema7'] > c2['ema21'])
-                        cross_down = (c3['ema7'] >= c3['ema21']) and (c2['ema7'] < c2['ema21'])
+                    # 2. Фильтр тренда (EMA200) и объема
+                    vol_ok = c2['volume'] > (c2['vol_sma20'] * 1.1)
+                    trend_long = c2['close'] > c2['ema200']
+                    trend_short = c2['close'] < c2['ema200']
 
-                        long_cond = cross_up and (38 < c2['rsi'] < 68)
-                        short_cond = cross_down and (32 < c2['rsi'] < 62)
+                    if cross_up and trend_long and vol_ok:
+                        print(f"🟢 Сигнал LONG: {symbol}")
+                        execute_smart_trade(symbol, 'BUY', c2['close'], c2['atr'])
+                        open_positions[symbol] = 1
+                        total_active += 1
 
-                        if long_cond:
-                            print(f"  🟢 {symbol}: ИМПУЛЬС ВВЕРХ (LONG)! Открываем сделку на ~$50...")
-                            execute_scalp_trade(symbol, 'BUY', c2['close'], c2['atr'])
-                            open_positions[symbol] = 1
-                            total_active += 1
-                        elif short_cond:
-                            print(f"  🔴 {symbol}: ИМПУЛЬС ВНИЗ (SHORT)! Открываем сделку на ~$50...")
-                            execute_scalp_trade(symbol, 'SELL', c2['close'], c2['atr'])
-                            open_positions[symbol] = -1
-                            total_active += 1
+                    elif cross_down and trend_short and vol_ok:
+                        print(f"🔴 Сигнал SHORT: {symbol}")
+                        execute_smart_trade(symbol, 'SELL', c2['close'], c2['atr'])
+                        open_positions[symbol] = -1
+                        total_active += 1
 
-                        time.sleep(0.3)
-
-                    except Exception as coin_err:
-                        print(f"  ❌ Ошибка по {symbol}: {coin_err}")
+                    time.sleep(0.5)
 
         except Exception as e:
-            print(f"❌ Ошибка в цикле: {e}")
+            print(f"❌ Ошибка в главном цикле: {e}")
 
-        time.sleep(45)
+        time.sleep(60)
 
-Thread(target=scalper_loop, daemon=True).start()
+Thread(target=bot_loop, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "⚡ Скальпинг-бот активен.", 200
+    return "🤖 Smart Trend Bot Active.", 200
 
 @app.route('/test')
 def test_tg():
-    send_telegram("⚡ ТЕСТ: Бот работает!")
+    send_telegram("🔔 Проверка Telegram: Бот на связи!")
     return "OK", 200
 
 if __name__ == '__main__':
