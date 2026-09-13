@@ -17,8 +17,8 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 TIMEFRAME = Client.KLINE_INTERVAL_15MINUTE
 LEVERAGE = 5  
-MAX_ACTIVE_POSITIONS = 3  # Разрешаем до 3 параллельных сделок
-TARGET_USDT = 25.0        # Объем позиции в USDT
+MAX_ACTIVE_POSITIONS = 5  # Увеличили до 5 параллельных сделок
+TARGET_USDT = 50.0        # Увеличили объем позиции в USDT (можешь поставить 75 или 100)
 
 binance_client = None
 if BINANCE_API_KEY and BINANCE_SECRET_KEY:
@@ -36,23 +36,30 @@ def send_telegram(text):
         except Exception as e:
             print(f"❌ Ошибка TG: {e}")
 
-def get_top_symbols(limit=80):
-    """Автозагрузка топ-пар по объему со фьючерсов Binance"""
+def get_top_symbols(limit=40):
+    """Сужаем сканер до топ-40 самых ликвидных и надежных пар, убирая мусор"""
     try:
         tickers = binance_client.futures_ticker()
-        # Сортируем по суточному объему торгов в USDT
         usdt_tickers = [t for t in tickers if t['symbol'].endswith('USDT') and 'USDC' not in t['symbol']]
         usdt_tickers = sorted(usdt_tickers, key=lambda x: float(x['quoteVolume']), reverse=True)
         
-        top_symbols = [t['symbol'] for t in usdt_tickers[:limit]]
+        # Жесткий стоп-лист для отсечения мем-монет и мусора, которые дают шпильки
+        blacklist = ['BTCDOMUSDT', 'DEFIUSDT']
+        
+        top_symbols = []
+        for t in usdt_tickers:
+            sym = t['symbol']
+            if sym not in blacklist:
+                top_symbols.append(sym)
+            if len(top_symbols) >= limit:
+                break
+                
         return top_symbols
     except Exception as e:
         print(f"⚠️ Ошибка загрузки топ пар: {e}")
-        # Резервный список на случай сбоя запроса
-        return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT']
+        return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'NEARUSDT']
 
 def get_exchange_rules():
-    """Динамическое получение точности цен и минимальных лотов для всех пар"""
     rules = {}
     try:
         exchange_info = binance_client.futures_exchange_info()
@@ -120,13 +127,11 @@ def get_klines_df(symbol):
     df['low'] = df['low'].astype(float)
     df['volume'] = df['volume'].astype(float)
 
-    # Индикаторы для стратегии «Снайпер-Импульс»
     df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
-    df['ema200'] = df['close'].ewm(span=50, adjust=False).mean() # Ускоренная для 15m
+    df['ema200'] = df['close'].ewm(span=50, adjust=False).mean()
     df['vol_sma20'] = df['volume'].rolling(window=20).mean()
 
-    # Размер тела свечи и ATR для стопов
     df['body_size'] = abs(df['close'] - df['open'])
     df['avg_body'] = df['body_size'].rolling(window=10).mean()
 
@@ -163,7 +168,6 @@ def execute_smart_trade(symbol, action, est_price, atr):
 
         binance_client.futures_change_leverage(symbol=symbol, leverage=LEVERAGE)
 
-        # 1. Вход по рынку
         binance_client.futures_create_order(
             symbol=symbol, side=action, type='MARKET', quantity=qty
         )
@@ -174,7 +178,6 @@ def execute_smart_trade(symbol, action, est_price, atr):
         if not real_entry or real_entry == 0:
             real_entry = est_price
 
-        # Короткий стоп под основание импульса (~1.5-2%)
         sl_dist = atr * 1.5
         tp_dist = atr * 3.0
 
@@ -187,20 +190,18 @@ def execute_smart_trade(symbol, action, est_price, atr):
             tp_price = format_price(symbol, real_entry - tp_dist)
             side_close = 'BUY'
 
-        # 2. Защитный Стоп-Лосс
         binance_client.futures_create_order(
             symbol=symbol, side=side_close, type='STOP_MARKET', stopPrice=sl_price, closePosition=True
         )
 
-        # 3. Тейк-Профит
         binance_client.futures_create_order(
             symbol=symbol, side=side_close, type='TAKE_PROFIT_MARKET', stopPrice=tp_price, closePosition=True
         )
 
         msg = (
-            f"🎯 *СНАЙПЕР-ИМПУЛЬС: ВХОД* (`{action}` | {LEVERAGE}x)\n"
+            f"🎯 *ТОП-40 СНАЙПЕР: ВХОД* (`{action}` | {LEVERAGE}x)\n"
             f"• Монета: `{symbol}` (15m)\n"
-            f"• Объем: `{qty}`\n"
+            f"• Объем: `{qty}` (~${TARGET_USDT})\n"
             f"• Вход: `~{real_entry}`\n"
             f"• Stop-Loss: `{sl_price}`\n"
             f"• Take-Profit: `{tp_price}`"
@@ -211,7 +212,6 @@ def execute_smart_trade(symbol, action, est_price, atr):
         print(f"❌ Ошибка входа по {symbol}: {err}")
 
 def manage_trailing_stops(current_positions):
-    """Динамический трейлинг: перенос в безубыток при хорошем движении"""
     for symbol, amt in current_positions.items():
         try:
             entry_price, position_amt = get_actual_entry_price(symbol)
@@ -221,18 +221,16 @@ def manage_trailing_stops(current_positions):
             ticker = binance_client.futures_symbol_ticker(symbol=symbol)
             current_price = float(ticker['price'])
             
-            # Проверяем процент движения в нашу сторону
             is_long = position_amt > 0
             if is_long:
                 profit_pct = (current_price - entry_price) / entry_price * 100
-                # Если ушли в плюс на 2.5% и более — подтягиваем стоп в безубыток или выше
                 if profit_pct >= 2.5:
                     clean_leftover_orders(symbol)
-                    new_sl = format_price(symbol, entry_price * 1.002) # Чуть выше входа
+                    new_sl = format_price(symbol, entry_price * 1.002)
                     binance_client.futures_create_order(
                         symbol=symbol, side='SELL', type='STOP_MARKET', stopPrice=new_sl, closePosition=True
                     )
-                    send_telegram(f"🛡 *Трелинг-стоп активирован* для `{symbol}`. Стоп перенесен в безубыток (+0.2%).")
+                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` перенесен в безубыток.")
             else:
                 profit_pct = (entry_price - current_price) / entry_price * 100
                 if profit_pct >= 2.5:
@@ -241,7 +239,7 @@ def manage_trailing_stops(current_positions):
                     binance_client.futures_create_order(
                         symbol=symbol, side='BUY', type='STOP_MARKET', stopPrice=new_sl, closePosition=True
                     )
-                    send_telegram(f"🛡 *Трелинг-стоп активирован* для `{symbol}`. Стоп перенесен в безубыток.")
+                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` перенесен в безубыток.")
         except Exception as e:
             print(f"⚠️ Ошибка трейлинга для {symbol}: {e}")
 
@@ -251,7 +249,7 @@ def bot_loop():
     
     if binance_client:
         SYMBOL_RULES = get_exchange_rules()
-        send_telegram("🚀 *Снайпер-Бот запущен!* Загружено топ-80 пар, активирован сканер импульсов и трейлинг.")
+        send_telegram("🚀 *Бот перезапущен по топ-40 парам!* Лимит слотов: 5, объем позиции увеличен.")
     
     known_positions = {}
 
@@ -260,15 +258,13 @@ def bot_loop():
             if binance_client:
                 current_positions = get_open_positions()
 
-                # Управление трейлингом для открытых позиций
                 if current_positions:
                     manage_trailing_stops(current_positions)
 
-                # Отслеживание закрытия позиций
                 for sym in list(known_positions.keys()):
                     if sym not in current_positions:
                         clean_leftover_orders(sym)
-                        send_telegram(f"🏁 Сделка по `{sym}` закрыта. Слот освобожден.")
+                        send_telegram(f"🏁 Сделка по `{sym}` закрыта. Слот свободен.")
                         del known_positions[sym]
 
                 for sym, amt in current_positions.items():
@@ -276,8 +272,8 @@ def bot_loop():
 
                 total_active = len(current_positions)
 
-                # Автозагружаем актуальный топ-80 пар на каждом круге
-                active_symbols = get_top_symbols(limit=80)
+                # Сканируем только топ-40 надежных монет
+                active_symbols = get_top_symbols(limit=40)
 
                 for symbol in active_symbols:
                     if symbol in current_positions or total_active >= MAX_ACTIVE_POSITIONS:
@@ -287,14 +283,12 @@ def bot_loop():
                     if len(df) < 30:
                         continue
 
-                    c2 = df.iloc[-2] # Закрытая свеча
-                    c3 = df.iloc[-3] # Предыдущая свеча
+                    c2 = df.iloc[-2]
+                    c3 = df.iloc[-3]
 
-                    # Логика фильтра «Снайпер-Импульс» (15m)
                     trend_up = c2['close'] > c2['ema200']
                     trend_down = c2['close'] < c2['ema200']
 
-                    # Пересечение EMA + импульсное тело свечи больше среднего + объем выше нормы
                     cross_up = (c3['ema9'] <= c3['ema21']) and (c2['ema9'] > c2['ema21'])
                     cross_down = (c3['ema9'] >= c3['ema21']) and (c2['ema9'] < c2['ema21'])
                     
@@ -314,14 +308,13 @@ def bot_loop():
         except Exception as e:
             print(f"❌ Ошибка главного цикла: {e}")
 
-        # Пауза между сканированиями рынка
         time.sleep(60)
 
 Thread(target=bot_loop, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "🤖 Sniper-Impulse Bot Active.", 200
+    return "🤖 Top-40 Sniper Bot Active.", 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
