@@ -1,15 +1,19 @@
+import os
 import time
+import requests
 import hmac
 import hashlib
-import requests
 from urllib.parse import urlencode
-from datetime import datetime
+from threading import Thread
+from flask import Flask
+
+app = Flask(__name__)
 
 # ==================== НАСТРОЙКИ API И TELEGRAM ====================
-API_KEY = "ТВОЙ_API_KEY"
-API_SECRET = "ТВОЙ_API_SECRET"
-TELEGRAM_TOKEN = "ТВОЙ_TELEGRAM_TOKEN"
-TELEGRAM_CHAT_ID = "ТВОЙ_CHAT_ID"
+API_KEY = os.environ.get('BINANCE_API_KEY', 'ТВОЙ_API_KEY')
+API_SECRET = os.environ.get('BINANCE_SECRET_KEY', 'ТВОЙ_SECRET_KEY')
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'ТВОЙ_TELEGRAM_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', 'ТВОЙ_CHAT_ID')
 
 BASE_URL = "https://fapi.binance.com"
 
@@ -28,6 +32,8 @@ SYMBOLS = [
 ]
 
 def send_telegram(message):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -92,7 +98,7 @@ def get_historical_klines(symbol, interval="15m", limit=50):
         response = requests.get(url, timeout=10)
         data = response.json()
         if isinstance(data, list):
-            return [float(x[4]) for x in data] # Цены закрытия
+            return [float(x[4]) for x in data]
     except:
         pass
     return []
@@ -115,7 +121,6 @@ def calculate_rsi(prices, period=14):
     return 100.0 - (100.0 / (1.0 + rs))
 
 def check_strict_signal(symbol):
-    """Жёсткий фильтр входа: тренд + RSI экстремум"""
     closes = get_historical_klines(symbol, "15m", 50)
     if len(closes) < 30:
         return None
@@ -125,18 +130,13 @@ def check_strict_signal(symbol):
     ema_50 = sum(closes[-50:]) / 50
     rsi = calculate_rsi(closes, 14)
 
-    # Жёсткий Лонг: тренд вверх + RSI в зоне перепроданности (< 35)
     if current_price > ema_20 > ema_50 and rsi < 35:
         return "BUY"
-    
-    # Жёсткий Шорт: тренд вниз + RSI в зоне перекупленности (> 65)
     if current_price < ema_20 < ema_50 and rsi > 65:
         return "SELL"
-        
     return None
 
 def manage_trailing_stops():
-    """Динамический трейлинг с обязательным сохранением Тейк-Профита"""
     account_info = send_signed_request("GET", "/fapi/v2/account")
     if not account_info or 'positions' not in account_info:
         return
@@ -158,10 +158,10 @@ def manage_trailing_stops():
             is_long = position_amt > 0
             if is_long:
                 profit_pct = (current_price - entry_price) / entry_price * 100
-                if profit_pct >= 2.0: # Прибыль 2% — переносим в безубыток
+                if profit_pct >= 2.0:
                     clean_leftover_orders(symbol)
                     new_sl = format_price(symbol, entry_price * 1.002)
-                    new_tp = format_price(symbol, entry_price * 1.04) # Цель +4%
+                    new_tp = format_price(symbol, entry_price * 1.04)
                     
                     send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": "SELL", "type": "STOP_MARKET", "stopPrice": new_sl, "closePosition": "true"
@@ -169,13 +169,13 @@ def manage_trailing_stops():
                     send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": "SELL", "type": "TAKE_PROFIT_MARKET", "stopPrice": new_tp, "closePosition": "true"
                     })
-                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` переведен в безубыток, цель обновлена на +4%.")
+                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` переведен в безубыток (+4%).")
             else:
                 profit_pct = (entry_price - current_price) / entry_price * 100
                 if profit_pct >= 2.0:
                     clean_leftover_orders(symbol)
                     new_sl = format_price(symbol, entry_price * 0.998)
-                    new_tp = format_price(symbol, entry_price * 0.96) # Цель падения -4%
+                    new_tp = format_price(symbol, entry_price * 0.96)
                     
                     send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": "BUY", "type": "STOP_MARKET", "stopPrice": new_sl, "closePosition": "true"
@@ -183,22 +183,20 @@ def manage_trailing_stops():
                     send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": "BUY", "type": "TAKE_PROFIT_MARKET", "stopPrice": new_tp, "closePosition": "true"
                     })
-                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` переведен в безубыток, цель обновлена на -4%.")
+                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` переведен в безубыток (-4%).")
         except Exception as e:
             print(f"Ошибка трейлинга {symbol}: {e}")
 
-def run_bot():
-    send_telegram("🚀 *Бот перезапущен в ЖЁСТКОМ режиме:* 30 топ-пар, строгий RSI-фильтр + защита ТП.")
+def bot_loop():
+    time.sleep(5)
+    send_telegram("🚀 *Бот запущен на Flask-сервере!* Режим: Жёсткий топ-30 + RSI + защита ТП.")
     while True:
         try:
-            # 1. Проверяем и управляем активными трейлингами
             manage_trailing_stops()
             
-            # 2. Сканируем рынок на предмет жестких точек входа
             for symbol in SYMBOLS:
                 signal = check_strict_signal(symbol)
                 if signal:
-                    # Проверяем, нет ли уже открытой позиции по этой паре
                     _, current_amt = get_actual_entry_price(symbol)
                     if current_amt != 0:
                         continue
@@ -209,16 +207,11 @@ def run_bot():
                     
                     qty = round((TARGET_USDT * LEVERAGE) / price, 3)
                     
-                    # Открываем сделку рыночным ордером
                     order_res = send_signed_request("POST", "/fapi/v1/order", {
-                        "symbol": symbol,
-                        "side": signal,
-                        "type": "MARKET",
-                        "quantity": qty
+                        "symbol": symbol, "side": signal, "type": "MARKET", "quantity": qty
                     })
                     
                     if order_res and 'orderId' in order_res:
-                        # Ставим жесткий фиксированный Стоп-Лосс (1.5%) и Тейк-Профит (3%)
                         if signal == "BUY":
                             sl_price = format_price(symbol, price * 0.985)
                             tp_price = format_price(symbol, price * 1.03)
@@ -235,12 +228,21 @@ def run_bot():
                             "symbol": symbol, "side": tp_side, "type": "TAKE_PROFIT_MARKET", "stopPrice": tp_price, "closePosition": "true"
                         })
                         
-                        send_telegram(f"⚡ *Жёсткий вход:* `{symbol}` | Направление: *{signal}* | Цена: `{price}`")
+                        send_telegram(f"⚡ *Жёсткий вход:* `{symbol}` | *{signal}* | Цена: `{price}`")
                         
-            time.sleep(60) # Пауза между итерациями сканирования
+            time.sleep(60)
         except Exception as e:
             print(f"Главный цикл ошибки: {e}")
             time.sleep(10)
 
-if __name__ == "__main__":
-    run_bot()
+# Запускаем торговый цикл в отдельном потоке, чтобы Flask работал как веб-сервер для Railway
+Thread(target=bot_loop, daemon=True).start()
+
+@app.route('/')
+def home():
+    return "🤖 Strict Top-30 Sniper Bot is Active.", 200
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+    
