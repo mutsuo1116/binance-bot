@@ -1,321 +1,246 @@
-import os
 import time
+import hmac
+import hashlib
 import requests
-import pandas as pd
-import numpy as np
-from threading import Thread
-from flask import Flask
-from binance.client import Client
-from binance.exceptions import BinanceAPIException
+from urllib.parse import urlencode
+from datetime import datetime
 
-app = Flask(__name__)
+# ==================== НАСТРОЙКИ API И TELEGRAM ====================
+API_KEY = "ТВОЙ_API_KEY"
+API_SECRET = "ТВОЙ_API_SECRET"
+TELEGRAM_TOKEN = "ТВОЙ_TELEGRAM_TOKEN"
+TELEGRAM_CHAT_ID = "ТВОЙ_CHAT_ID"
 
-BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY')
-BINANCE_SECRET_KEY = os.environ.get('BINANCE_SECRET_KEY')
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+BASE_URL = "https://fapi.binance.com"
 
-TIMEFRAME = Client.KLINE_INTERVAL_15MINUTE
-LEVERAGE = 5  
-MAX_ACTIVE_POSITIONS = 5  # Увеличили до 5 параллельных сделок
-TARGET_USDT = 50.0        # Увеличили объем позиции в USDT (можешь поставить 75 или 100)
+# ==================== РИСК-МЕНЕДЖМЕНТ И ПАРАМЕТРЫ ====================
+LEVERAGE = 5              # Кредитное плечо
+TARGET_USDT = 50.0        # Объем позиции в USDT (маржа ~10 USDT с плечом 5x)
 
-binance_client = None
-if BINANCE_API_KEY and BINANCE_SECRET_KEY:
+# Урезанный и жесткий список из 30 топовых и ликвидных пар
+SYMBOLS = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", 
+    "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", 
+    "MATICUSDT", "UNIUSDT", "ATOMUSDT", "LTCUSDT", "ETCUSDT", 
+    "NEARUSDT", "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", 
+    "INJUSDT", "SUIUSDT", "RNDRUSDT", "TIAUSDT", "SEIUSDT", 
+    "IMXUSDT", "RENDERUSDT", "PEPEUSDT", "SHIBUSDT", "WIFUSDT"
+]
+
+def send_telegram(message):
     try:
-        binance_client = Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-        print("✅ Binance API подключен.")
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+        requests.post(url, data=payload, timeout=5)
     except Exception as e:
-        print(f"❌ Ошибка Binance API: {e}")
+        print(f"Ошибка отправки в Telegram: {e}")
 
-def send_telegram(text):
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        try:
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=8)
-        except Exception as e:
-            print(f"❌ Ошибка TG: {e}")
+def get_signature(query_string):
+    return hmac.new(API_SECRET.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
 
-def get_top_symbols(limit=40):
-    """Сужаем сканер до топ-40 самых ликвидных и надежных пар, убирая мусор"""
-    try:
-        tickers = binance_client.futures_ticker()
-        usdt_tickers = [t for t in tickers if t['symbol'].endswith('USDT') and 'USDC' not in t['symbol']]
-        usdt_tickers = sorted(usdt_tickers, key=lambda x: float(x['quoteVolume']), reverse=True)
-        
-        # Жесткий стоп-лист для отсечения мем-монет и мусора, которые дают шпильки
-        blacklist = ['BTCDOMUSDT', 'DEFIUSDT']
-        
-        top_symbols = []
-        for t in usdt_tickers:
-            sym = t['symbol']
-            if sym not in blacklist:
-                top_symbols.append(sym)
-            if len(top_symbols) >= limit:
-                break
-                
-        return top_symbols
-    except Exception as e:
-        print(f"⚠️ Ошибка загрузки топ пар: {e}")
-        return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'NEARUSDT']
-
-def get_exchange_rules():
-    rules = {}
-    try:
-        exchange_info = binance_client.futures_exchange_info()
-        for s in exchange_info['symbols']:
-            symbol = s['symbol']
-            price_precision = s['pricePrecision']
-            qty_precision = s['quantityPrecision']
-            
-            min_qty = 1.0
-            for f in s['filters']:
-                if f['filterType'] == 'LOT_SIZE':
-                    min_qty = float(f['minQty'])
-                    
-            rules[symbol] = {
-                'price_dec': price_precision,
-                'qty_dec': qty_precision,
-                'min_qty': min_qty
-            }
-    except Exception as e:
-        print(f"⚠️ Ошибка получения правил биржи: {e}")
-    return rules
-
-SYMBOL_RULES = {}
-
-def format_price(symbol, price):
-    dec = SYMBOL_RULES.get(symbol, {}).get('price_dec', 2)
-    return round(float(price), dec)
-
-def calculate_safe_qty(symbol, current_price):
-    rules = SYMBOL_RULES.get(symbol, {'qty_dec': 2, 'min_qty': 1.0})
-    raw_qty = TARGET_USDT / current_price
-    final_qty = max(raw_qty, rules['min_qty'])
-    dec = rules['qty_dec']
-    if dec == 0:
-        return float(int(final_qty))
-    return round(final_qty, dec)
-
-def clean_leftover_orders(symbol):
-    try:
-        binance_client.futures_cancel_all_open_orders(symbol=symbol)
-    except Exception as e:
-        print(f"⚠️ Ошибка чистки ордеров {symbol}: {e}")
-
-def get_actual_entry_price(symbol):
-    try:
-        positions = binance_client.futures_position_information(symbol=symbol)
-        for p in positions:
-            if p['symbol'] == symbol:
-                amt = float(p['positionAmt'])
-                if amt != 0:
-                    return float(p['entryPrice']), amt
-    except Exception as e:
-        print(f"⚠️ Ошибка получения цены входа {symbol}: {e}")
-    return None, 0
-
-def get_klines_df(symbol):
-    klines = binance_client.futures_klines(symbol=symbol, interval=TIMEFRAME, limit=150)
-    df = pd.DataFrame(klines, columns=[
-        'timestamp', 'open', 'high', 'low', 'close', 'volume',
-        'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
-    ])
-    df['open'] = df['open'].astype(float)
-    df['close'] = df['close'].astype(float)
-    df['high'] = df['high'].astype(float)
-    df['low'] = df['low'].astype(float)
-    df['volume'] = df['volume'].astype(float)
-
-    df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
-    df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
-    df['ema200'] = df['close'].ewm(span=50, adjust=False).mean()
-    df['vol_sma20'] = df['volume'].rolling(window=20).mean()
-
-    df['body_size'] = abs(df['close'] - df['open'])
-    df['avg_body'] = df['body_size'].rolling(window=10).mean()
-
-    high_low = df['high'] - df['low']
-    high_close = np.abs(df['high'] - df['close'].shift())
-    low_close = np.abs(df['low'] - df['low'].shift())
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    df['atr'] = np.max(ranges, axis=1).rolling(14).mean()
-
-    return df
-
-def get_open_positions():
-    active = {}
-    try:
-        positions = binance_client.futures_position_information()
-        for p in positions:
-            amt = float(p['positionAmt'])
-            if amt != 0:
-                active[p['symbol']] = amt
-    except Exception as e:
-        print(f"⚠️ Ошибка получения позиций: {e}")
-    return active
-
-def execute_smart_trade(symbol, action, est_price, atr):
-    qty = calculate_safe_qty(symbol, est_price)
+def send_signed_request(http_method, url_path, payload={}):
+    query_string = urlencode(payload)
+    if query_string:
+        query_string = f"{query_string}&timestamp={int(time.time() * 1000)}"
+    else:
+        query_string = f"timestamp={int(time.time() * 1000)}"
+    
+    signature = get_signature(query_string)
+    url = f"{BASE_URL}{url_path}?{query_string}&signature={signature}"
+    headers = {"X-MBX-APIKEY": API_KEY}
     
     try:
-        clean_leftover_orders(symbol)
+        if http_method == "GET":
+            response = requests.get(url, headers=headers, timeout=10)
+        elif http_method == "POST":
+            response = requests.post(url, headers=headers, timeout=10)
+        elif http_method == "DELETE":
+            response = requests.delete(url, headers=headers, timeout=10)
+        return response.json()
+    except Exception as e:
+        print(f"Ошибка запроса {url_path}: {e}")
+        return None
 
-        try:
-            binance_client.futures_change_margin_type(symbol=symbol, marginType='ISOLATED')
-        except BinanceAPIException:
-            pass
+def set_leverage(symbol):
+    send_signed_request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": LEVERAGE})
 
-        binance_client.futures_change_leverage(symbol=symbol, leverage=LEVERAGE)
+def format_price(symbol, price):
+    if "BTC" in symbol:
+        return round(price, 1)
+    elif "ETH" in symbol:
+        return round(price, 2)
+    else:
+        return round(price, 4)
 
-        binance_client.futures_create_order(
-            symbol=symbol, side=action, type='MARKET', quantity=qty
-        )
+def get_actual_entry_price(symbol):
+    positions = send_signed_request("GET", "/fapi/v2/positionRisk", {"symbol": symbol})
+    if positions and isinstance(positions, list):
+        for p in positions:
+            if float(p['positionAmt']) != 0:
+                return float(p['entryPrice']), float(p['positionAmt'])
+    return None, 0.0
 
-        time.sleep(1)
+def clean_leftover_orders(symbol):
+    orders = send_signed_request("GET", "/fapi/v1/openOrders", {"symbol": symbol})
+    if orders and isinstance(orders, list):
+        for o in orders:
+            send_signed_request("DELETE", "/fapi/v1/order", {"symbol": symbol, "orderId": o['orderId']})
 
-        real_entry, _ = get_actual_entry_price(symbol)
-        if not real_entry or real_entry == 0:
-            real_entry = est_price
+def get_historical_klines(symbol, interval="15m", limit=50):
+    url = f"{BASE_URL}/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if isinstance(data, list):
+            return [float(x[4]) for x in data] # Цены закрытия
+    except:
+        pass
+    return []
 
-        sl_dist = atr * 1.5
-        tp_dist = atr * 3.0
-
-        if action == 'BUY':
-            sl_price = format_price(symbol, real_entry - sl_dist)
-            tp_price = format_price(symbol, real_entry + tp_dist)
-            side_close = 'SELL'
+def calculate_rsi(prices, period=14):
+    if len(prices) < period + 1:
+        return 50.0
+    gains, losses = 0.0, 0.0
+    for i in range(1, period + 1):
+        diff = prices[-i] - prices[-i-1]
+        if diff >= 0:
+            gains += diff
         else:
-            sl_price = format_price(symbol, real_entry + sl_dist)
-            tp_price = format_price(symbol, real_entry - tp_dist)
-            side_close = 'BUY'
+            losses -= diff
+    avg_gain = gains / period
+    avg_loss = losses / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
 
-        binance_client.futures_create_order(
-            symbol=symbol, side=side_close, type='STOP_MARKET', stopPrice=sl_price, closePosition=True
-        )
+def check_strict_signal(symbol):
+    """Жёсткий фильтр входа: тренд + RSI экстремум"""
+    closes = get_historical_klines(symbol, "15m", 50)
+    if len(closes) < 30:
+        return None
+    
+    current_price = closes[-1]
+    ema_20 = sum(closes[-20:]) / 20
+    ema_50 = sum(closes[-50:]) / 50
+    rsi = calculate_rsi(closes, 14)
 
-        binance_client.futures_create_order(
-            symbol=symbol, side=side_close, type='TAKE_PROFIT_MARKET', stopPrice=tp_price, closePosition=True
-        )
+    # Жёсткий Лонг: тренд вверх + RSI в зоне перепроданности (< 35)
+    if current_price > ema_20 > ema_50 and rsi < 35:
+        return "BUY"
+    
+    # Жёсткий Шорт: тренд вниз + RSI в зоне перекупленности (> 65)
+    if current_price < ema_20 < ema_50 and rsi > 65:
+        return "SELL"
+        
+    return None
 
-        msg = (
-            f"🎯 *ТОП-40 СНАЙПЕР: ВХОД* (`{action}` | {LEVERAGE}x)\n"
-            f"• Монета: `{symbol}` (15m)\n"
-            f"• Объем: `{qty}` (~${TARGET_USDT})\n"
-            f"• Вход: `~{real_entry}`\n"
-            f"• Stop-Loss: `{sl_price}`\n"
-            f"• Take-Profit: `{tp_price}`"
-        )
-        send_telegram(msg)
-
-    except Exception as err:
-        print(f"❌ Ошибка входа по {symbol}: {err}")
-
-def manage_trailing_stops(current_positions):
-    for symbol, amt in current_positions.items():
+def manage_trailing_stops():
+    """Динамический трейлинг с обязательным сохранением Тейк-Профита"""
+    account_info = send_signed_request("GET", "/fapi/v2/account")
+    if not account_info or 'positions' not in account_info:
+        return
+        
+    for p in account_info['positions']:
+        symbol = p['symbol']
+        position_amt = float(p['positionAmt'])
+        if position_amt == 0:
+            continue
+            
         try:
-            entry_price, position_amt = get_actual_entry_price(symbol)
+            entry_price, _ = get_actual_entry_price(symbol)
             if not entry_price:
                 continue
-            
-            ticker = binance_client.futures_symbol_ticker(symbol=symbol)
+                
+            ticker = requests.get(f"{BASE_URL}/fapi/v1/ticker/price?symbol={symbol}", timeout=5).json()
             current_price = float(ticker['price'])
             
             is_long = position_amt > 0
             if is_long:
                 profit_pct = (current_price - entry_price) / entry_price * 100
-                if profit_pct >= 2.5:
+                if profit_pct >= 2.0: # Прибыль 2% — переносим в безубыток
                     clean_leftover_orders(symbol)
                     new_sl = format_price(symbol, entry_price * 1.002)
-                    binance_client.futures_create_order(
-                        symbol=symbol, side='SELL', type='STOP_MARKET', stopPrice=new_sl, closePosition=True
-                    )
-                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` перенесен в безубыток.")
+                    new_tp = format_price(symbol, entry_price * 1.04) # Цель +4%
+                    
+                    send_signed_request("POST", "/fapi/v1/order", {
+                        "symbol": symbol, "side": "SELL", "type": "STOP_MARKET", "stopPrice": new_sl, "closePosition": "true"
+                    })
+                    send_signed_request("POST", "/fapi/v1/order", {
+                        "symbol": symbol, "side": "SELL", "type": "TAKE_PROFIT_MARKET", "stopPrice": new_tp, "closePosition": "true"
+                    })
+                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` переведен в безубыток, цель обновлена на +4%.")
             else:
                 profit_pct = (entry_price - current_price) / entry_price * 100
-                if profit_pct >= 2.5:
+                if profit_pct >= 2.0:
                     clean_leftover_orders(symbol)
                     new_sl = format_price(symbol, entry_price * 0.998)
-                    binance_client.futures_create_order(
-                        symbol=symbol, side='BUY', type='STOP_MARKET', stopPrice=new_sl, closePosition=True
-                    )
-                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` перенесен в безубыток.")
+                    new_tp = format_price(symbol, entry_price * 0.96) # Цель падения -4%
+                    
+                    send_signed_request("POST", "/fapi/v1/order", {
+                        "symbol": symbol, "side": "BUY", "type": "STOP_MARKET", "stopPrice": new_sl, "closePosition": "true"
+                    })
+                    send_signed_request("POST", "/fapi/v1/order", {
+                        "symbol": symbol, "side": "BUY", "type": "TAKE_PROFIT_MARKET", "stopPrice": new_tp, "closePosition": "true"
+                    })
+                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` переведен в безубыток, цель обновлена на -4%.")
         except Exception as e:
-            print(f"⚠️ Ошибка трейлинга для {symbol}: {e}")
+            print(f"Ошибка трейлинга {symbol}: {e}")
 
-def bot_loop():
-    time.sleep(5)
-    global SYMBOL_RULES
-    
-    if binance_client:
-        SYMBOL_RULES = get_exchange_rules()
-        send_telegram("🚀 *Бот перезапущен по топ-40 парам!* Лимит слотов: 5, объем позиции увеличен.")
-    
-    known_positions = {}
-
+def run_bot():
+    send_telegram("🚀 *Бот перезапущен в ЖЁСТКОМ режиме:* 30 топ-пар, строгий RSI-фильтр + защита ТП.")
     while True:
         try:
-            if binance_client:
-                current_positions = get_open_positions()
-
-                if current_positions:
-                    manage_trailing_stops(current_positions)
-
-                for sym in list(known_positions.keys()):
-                    if sym not in current_positions:
-                        clean_leftover_orders(sym)
-                        send_telegram(f"🏁 Сделка по `{sym}` закрыта. Слот свободен.")
-                        del known_positions[sym]
-
-                for sym, amt in current_positions.items():
-                    known_positions[sym] = amt
-
-                total_active = len(current_positions)
-
-                # Сканируем только топ-40 надежных монет
-                active_symbols = get_top_symbols(limit=40)
-
-                for symbol in active_symbols:
-                    if symbol in current_positions or total_active >= MAX_ACTIVE_POSITIONS:
+            # 1. Проверяем и управляем активными трейлингами
+            manage_trailing_stops()
+            
+            # 2. Сканируем рынок на предмет жестких точек входа
+            for symbol in SYMBOLS:
+                signal = check_strict_signal(symbol)
+                if signal:
+                    # Проверяем, нет ли уже открытой позиции по этой паре
+                    _, current_amt = get_actual_entry_price(symbol)
+                    if current_amt != 0:
                         continue
-
-                    df = get_klines_df(symbol)
-                    if len(df) < 30:
-                        continue
-
-                    c2 = df.iloc[-2]
-                    c3 = df.iloc[-3]
-
-                    trend_up = c2['close'] > c2['ema200']
-                    trend_down = c2['close'] < c2['ema200']
-
-                    cross_up = (c3['ema9'] <= c3['ema21']) and (c2['ema9'] > c2['ema21'])
-                    cross_down = (c3['ema9'] >= c3['ema21']) and (c2['ema9'] < c2['ema21'])
+                        
+                    set_leverage(symbol)
+                    ticker = requests.get(f"{BASE_URL}/fapi/v1/ticker/price?symbol={symbol}", timeout=5).json()
+                    price = float(ticker['price'])
                     
-                    impulse_ok = c2['body_size'] > (c2['avg_body'] * 1.2)
-                    vol_ok = c2['volume'] > (c2['vol_sma20'] * 1.3)
-
-                    if cross_up and trend_up and impulse_ok and vol_ok:
-                        execute_smart_trade(symbol, 'BUY', c2['close'], c2['atr'])
-                        total_active += 1
-                        time.sleep(1)
-
-                    elif cross_down and trend_down and impulse_ok and vol_ok:
-                        execute_smart_trade(symbol, 'SELL', c2['close'], c2['atr'])
-                        total_active += 1
-                        time.sleep(1)
-
+                    qty = round((TARGET_USDT * LEVERAGE) / price, 3)
+                    
+                    # Открываем сделку рыночным ордером
+                    order_res = send_signed_request("POST", "/fapi/v1/order", {
+                        "symbol": symbol,
+                        "side": signal,
+                        "type": "MARKET",
+                        "quantity": qty
+                    })
+                    
+                    if order_res and 'orderId' in order_res:
+                        # Ставим жесткий фиксированный Стоп-Лосс (1.5%) и Тейк-Профит (3%)
+                        if signal == "BUY":
+                            sl_price = format_price(symbol, price * 0.985)
+                            tp_price = format_price(symbol, price * 1.03)
+                            sl_side, tp_side = "SELL", "SELL"
+                        else:
+                            sl_price = format_price(symbol, price * 1.015)
+                            tp_price = format_price(symbol, price * 0.97)
+                            sl_side, tp_side = "BUY", "BUY"
+                            
+                        send_signed_request("POST", "/fapi/v1/order", {
+                            "symbol": symbol, "side": sl_side, "type": "STOP_MARKET", "stopPrice": sl_price, "closePosition": "true"
+                        })
+                        send_signed_request("POST", "/fapi/v1/order", {
+                            "symbol": symbol, "side": tp_side, "type": "TAKE_PROFIT_MARKET", "stopPrice": tp_price, "closePosition": "true"
+                        })
+                        
+                        send_telegram(f"⚡ *Жёсткий вход:* `{symbol}` | Направление: *{signal}* | Цена: `{price}`")
+                        
+            time.sleep(60) # Пауза между итерациями сканирования
         except Exception as e:
-            print(f"❌ Ошибка главного цикла: {e}")
+            print(f"Главный цикл ошибки: {e}")
+            time.sleep(10)
 
-        time.sleep(60)
-
-Thread(target=bot_loop, daemon=True).start()
-
-@app.route('/')
-def home():
-    return "🤖 Top-40 Sniper Bot Active.", 200
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    run_bot()
