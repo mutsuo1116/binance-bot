@@ -1,3 +1,5 @@
+
+
 import os
 import time
 import hmac
@@ -1029,260 +1031,225 @@ def rsi(values, period=14):
     ] * period
 
     for i in range(
-                period,
+        period,
+        len(gains)
     ):
-        gain = gains[i]
-        loss = losses[i]
-
         avg_gain = (
             (avg_gain * (period - 1))
-            + gain
+            + gains[i]
         ) / period
 
         avg_loss = (
             (avg_loss * (period - 1))
-            + loss
+            + losses[i]
         ) / period
 
         if avg_loss == 0:
-            result.append(100.0)
+            value = 100
         else:
-            rs = avg_gain / avg_loss
-            result.append(
-                100.0
-                - (
-                    100.0
-                    / (1.0 + rs)
-                )
+            rs = (
+                avg_gain
+                / avg_loss
             )
 
-    return result
-
-
-def true_range(high, low, close):
-    if not high or not low or not close:
-        return []
-
-    result = []
-
-    for i in range(len(close)):
-        if i == 0:
-            result.append(
-                float(high[i])
-                - float(low[i])
+            value = (
+                100
+                - 100 / (1 + rs)
             )
-        else:
-            result.append(
-                max(
-                    float(high[i])
-                    - float(low[i]),
-                    abs(
-                        float(high[i])
-                        - float(close[i - 1])
-                    ),
-                    abs(
-                        float(low[i])
-                        - float(close[i - 1])
-                    ),
-                )
-            )
-
-    return result
-
-
-def atr(
-    high,
-    low,
-    close,
-    period=14,
-):
-    tr = true_range(
-        high,
-        low,
-        close,
-    )
-
-    if len(tr) < period:
-        return []
-
-    value = (
-        sum(tr[:period])
-        / period
-    )
-
-    result = [
-        None
-    ] * (period - 1)
-
-    result.append(value)
-
-    for i in range(
-        period,
-        len(tr),
-    ):
-        value = (
-            (
-                value
-                * (period - 1)
-            )
-            + tr[i]
-        ) / period
 
         result.append(value)
 
     return result
 
 
-def adx(
-    high,
-    low,
-    close,
-    period=14,
+def atr(
+    highs,
+    lows,
+    closes,
+    period=14
 ):
-    if len(close) < (
-        period * 2
-        + 1
-    ):
+    if len(closes) <= period:
         return []
 
     tr = []
-    plus_dm = []
-    minus_dm = []
 
-    for i in range(
-        1,
-        len(close),
-    ):
-        current_high = float(
-            high[i]
-        )
-        previous_high = float(
-            high[i - 1]
-        )
+    for i in range(1, len(closes)):
+        current_high = highs[i]
+        current_low = lows[i]
+        previous_close = closes[i - 1]
 
-        current_low = float(
-            low[i]
-        )
-        previous_low = float(
-            low[i - 1]
-        )
-
-        current_close = float(
-            close[i]
-        )
-
-        previous_close = float(
-            close[i - 1]
-        )
-
-        tr_value = max(
-            current_high
-            - current_low,
-
+        true_range = max(
+            current_high - current_low,
             abs(
                 current_high
                 - previous_close
             ),
-
             abs(
                 current_low
                 - previous_close
+            )
+        )
+
+        tr.append(true_range)
+
+    current_atr = (
+        sum(tr[:period])
+        / period
+    )
+
+    result = [
+        current_atr
+    ]
+
+    for i in range(
+        period,
+        len(tr)
+    ):
+        current_atr = (
+            (
+                current_atr
+                * (period - 1)
+            )
+            + tr[i]
+        ) / period
+
+        result.append(
+            current_atr
+        )
+
+    return result
+
+
+def adx(
+    highs,
+    lows,
+    closes,
+    period=14
+):
+    if len(closes) < (
+        period * 2 + 2
+    ):
+        return []
+
+    trs = []
+    plus_dm = []
+    minus_dm = []
+
+    for i in range(1, len(closes)):
+
+        high = highs[i]
+        low = lows[i]
+
+        previous_high = highs[i - 1]
+        previous_low = lows[i - 1]
+        previous_close = closes[i - 1]
+
+        tr = max(
+            high - low,
+            abs(
+                high
+                - previous_close
             ),
+            abs(
+                low
+                - previous_close
+            )
         )
 
         up_move = (
-            current_high
+            high
             - previous_high
         )
 
         down_move = (
             previous_low
-            - current_low
+            - low
         )
 
-        if (
-            up_move > down_move
-            and up_move > 0
-        ):
-            pdm = up_move
-        else:
-            pdm = 0.0
+        plus = (
+            up_move
+            if (
+                up_move > down_move
+                and up_move > 0
+            )
+            else 0
+        )
 
-        if (
-            down_move > up_move
-            and down_move > 0
-        ):
-            mdm = down_move
-        else:
-            mdm = 0.0
+        minus = (
+            down_move
+            if (
+                down_move > up_move
+                and down_move > 0
+            )
+            else 0
+        )
 
-        tr.append(tr_value)
-        plus_dm.append(pdm)
-        minus_dm.append(mdm)
+        trs.append(tr)
+        plus_dm.append(plus)
+        minus_dm.append(minus)
 
-    if len(tr) < period:
+    if len(trs) < period:
         return []
 
-    smoothed_tr = (
-        sum(tr[:period])
+    atr_value = (
+        sum(trs[:period])
+        / period
     )
 
-    smoothed_plus = (
+    plus_value = (
         sum(plus_dm[:period])
+        / period
     )
 
-    smoothed_minus = (
+    minus_value = (
         sum(minus_dm[:period])
+        / period
     )
 
     dx_values = []
 
     for i in range(
         period,
-        len(tr),
+        len(trs)
     ):
-        if i > period:
-            smoothed_tr = (
-                smoothed_tr
-                - (
-                    smoothed_tr
-                    / period
-                )
-                + tr[i]
+        atr_value = (
+            (
+                atr_value
+                * (period - 1)
             )
+            + trs[i]
+        ) / period
 
-            smoothed_plus = (
-                smoothed_plus
-                - (
-                    smoothed_plus
-                    / period
-                )
-                + plus_dm[i]
+        plus_value = (
+            (
+                plus_value
+                * (period - 1)
             )
+            + plus_dm[i]
+        ) / period
 
-            smoothed_minus = (
-                smoothed_minus
-                - (
-                    smoothed_minus
-                    / period
-                )
-                + minus_dm[i]
+        minus_value = (
+            (
+                minus_value
+                * (period - 1)
             )
+            + minus_dm[i]
+        ) / period
 
-        if smoothed_tr == 0:
-            dx_values.append(0.0)
+        if atr_value == 0:
+            dx_values.append(0)
             continue
 
         plus_di = (
-            100.0
-            * smoothed_plus
-            / smoothed_tr
+            100
+            * plus_value
+            / atr_value
         )
 
         minus_di = (
-            100.0
-            * smoothed_minus
-            / smoothed_tr
+            100
+            * minus_value
+            / atr_value
         )
 
         denominator = (
@@ -1291,10 +1258,10 @@ def adx(
         )
 
         if denominator == 0:
-            dx = 0.0
+            dx = 0
         else:
             dx = (
-                100.0
+                100
                 * abs(
                     plus_di
                     - minus_di
@@ -1307,1856 +1274,694 @@ def adx(
     if len(dx_values) < period:
         return []
 
-    adx_values = [
-        None
-    ] * (
-        len(close)
-        - len(dx_values)
-        - 1
-    )
-
-    first_adx = (
-        sum(
-            dx_values[:period]
-        )
+    adx_value = (
+        sum(dx_values[:period])
         / period
     )
 
-    adx_values.append(
-        first_adx
-    )
-
-    current_adx = first_adx
+    result = [
+        adx_value
+    ]
 
     for i in range(
         period,
-        len(dx_values),
+        len(dx_values)
     ):
-        current_adx = (
+        adx_value = (
             (
-                current_adx
+                adx_value
                 * (period - 1)
             )
             + dx_values[i]
         ) / period
 
-        adx_values.append(
-            current_adx
-        )
-
-    return adx_values
-
-
-# ============================================================
-# DATA HELPERS
-# ============================================================
-
-def safe_float(
-    value,
-    default=0.0,
-):
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
-def now_utc():
-    return datetime.now(
-        timezone.utc
-    )
-
-
-def now_ts():
-    return int(
-        time.time()
-    )
-
-
-def today_utc():
-    return now_utc().strftime(
-        "%Y-%m-%d"
-    )
-
-
-def clamp(
-    value,
-    minimum,
-    maximum,
-):
-    return max(
-        minimum,
-        min(
-            maximum,
-            value,
-        ),
-    )
-
-
-def round_down(
-    value,
-    step,
-):
-    if step <= 0:
-        return value
-
-    return (
-        math.floor(
-            value / step
-            + 1e-12
-        )
-        * step
-    )
-
-
-def round_to_step(
-    value,
-    step,
-):
-    if step <= 0:
-        return value
-
-    return (
-        round_down(
-            value,
-            step,
-        )
-    )
-
-
-def format_number(
-    value,
-    decimals=8,
-):
-    return f"{float(value):.{decimals}f}".rstrip(
-        "0"
-    ).rstrip(".")
-
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-DB_PATH = "bot.db"
-
-
-def db_connect():
-    conn = sqlite3.connect(
-        DB_PATH,
-        check_same_thread=False,
-    )
-
-    conn.row_factory = (
-        sqlite3.Row
-    )
-
-    return conn
-
-
-def init_db():
-    conn = db_connect()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS
-        trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT,
-            side TEXT,
-            entry REAL,
-            stop REAL,
-            target REAL,
-            qty REAL,
-            status TEXT,
-            pnl REAL DEFAULT 0,
-            r_multiple REAL DEFAULT 0,
-            opened_at TEXT,
-            closed_at TEXT,
-            reason TEXT
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS
-        state (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-        """
-    )
-
-    conn.commit()
-    conn.close()
-
-
-def state_get(
-    key,
-    default=None,
-):
-    conn = db_connect()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT value
-        FROM state
-        WHERE key = ?
-        """,
-        (key,),
-    )
-
-    row = cursor.fetchone()
-
-    conn.close()
-
-    if row is None:
-        return default
-
-    return row["value"]
-
-
-def state_set(
-    key,
-    value,
-):
-    conn = db_connect()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO state (
-            key,
-            value
-        )
-        VALUES (?, ?)
-        ON CONFLICT(key)
-        DO UPDATE SET
-            value = excluded.value
-        """,
-        (
-            key,
-            str(value),
-        ),
-    )
-
-    conn.commit()
-    conn.close()
-
-
-def add_trade(
-    symbol,
-    side,
-    entry,
-    stop,
-    target,
-    qty,
-    status="OPEN",
-):
-    conn = db_connect()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO trades (
-            symbol,
-            side,
-            entry,
-            stop,
-            target,
-            qty,
-            status,
-            opened_at
-        )
-        VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?
-        )
-        """,
-        (
-            symbol,
-            side,
-            entry,
-            stop,
-            target,
-            qty,
-            status,
-            now_utc().isoformat(),
-        ),
-    )
-
-    trade_id = cursor.lastrowid
-
-    conn.commit()
-    conn.close()
-
-    return trade_id
-
-
-def close_trade(
-    trade_id,
-    pnl=0.0,
-    r_multiple=0.0,
-    reason="UNKNOWN",
-):
-    conn = db_connect()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        UPDATE trades
-        SET
-            status = 'CLOSED',
-            pnl = ?,
-            r_multiple = ?,
-            closed_at = ?,
-            reason = ?
-        WHERE id = ?
-        """,
-        (
-            pnl,
-            r_multiple,
-            now_utc().isoformat(),
-            reason,
-            trade_id,
-        ),
-    )
-
-    conn.commit()
-    conn.close()
-
-
-def get_open_trades():
-    conn = db_connect()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT *
-        FROM trades
-        WHERE status = 'OPEN'
-        ORDER BY id DESC
-        """
-    )
-
-    rows = cursor.fetchall()
-
-    conn.close()
-
-    return rows
-
-
-def get_recent_trades(
-    limit=20,
-):
-    conn = db_connect()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT *
-        FROM trades
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        (limit,),
-    )
-
-    rows = cursor.fetchall()
-
-    conn.close()
-
-    return rows
-
-
-# ============================================================
-# PAPER ACCOUNT
-# ============================================================
-
-def get_paper_equity():
-    value = state_get(
-        "paper_equity"
-    )
-
-    if value is None:
-        state_set(
-            "paper_equity",
-            PAPER_START_EQUITY,
-        )
-
-        return float(
-            PAPER_START_EQUITY
-        )
-
-    return safe_float(
-        value,
-        PAPER_START_EQUITY,
-    )
-
-
-def set_paper_equity(
-    value,
-):
-    state_set(
-        "paper_equity",
-        round(
-            float(value),
-            8,
-        ),
-    )
-
-
-def get_day_start_equity():
-    today = today_utc()
-
-    stored_day = state_get(
-        "equity_day"
-    )
-
-    if stored_day != today:
-        equity = get_account_equity()
-
-        state_set(
-            "equity_day",
-            today,
-        )
-
-        state_set(
-            "day_start_equity",
-            equity,
-        )
-
-        return equity
-
-    stored = state_get(
-        "day_start_equity"
-    )
-
-    if stored is None:
-        equity = get_account_equity()
-
-        state_set(
-            "day_start_equity",
-            equity,
-        )
-
-        return equity
-
-    return safe_float(
-        stored,
-        get_account_equity(),
-    )
-
-
-# ============================================================
-# BINANCE API
-# ============================================================
-
-SESSION = requests.Session()
-
-EXCHANGE_INFO_CACHE = None
-EXCHANGE_INFO_TIME = 0
-
-SYMBOL_RULES = {}
-
-
-def public_get(
-    path,
-    params=None,
-    timeout=15,
-):
-    url = (
-        BASE_URL
-        + path
-    )
-
-    response = SESSION.get(
-        url,
-        params=params or {},
-        timeout=timeout,
-    )
-
-    response.raise_for_status()
-
-    return response.json()
-
-
-def sign_params(
-    params,
-):
-    params = dict(
-        params or {}
-    )
-
-    params[
-        "timestamp"
-    ] = now_ts() * 1000
-
-    params[
-        "recvWindow"
-    ] = RECV_WINDOW
-
-    query = urlencode(
-        params,
-        doseq=True,
-    )
-
-    signature = hmac.new(
-        BINANCE_SECRET_KEY.encode(),
-        query.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-
-    params[
-        "signature"
-    ] = signature
-
-    return params
-
-
-def signed_request(
-    method,
-    path,
-    params=None,
-    timeout=15,
-):
-    if not BINANCE_API_KEY:
-        raise RuntimeError(
-            "BINANCE_API_KEY is missing"
-        )
-
-    if not BINANCE_SECRET_KEY:
-        raise RuntimeError(
-            "BINANCE_SECRET_KEY is missing"
-        )
-
-    headers = {
-        "X-MBX-APIKEY":
-            BINANCE_API_KEY
-    }
-
-    signed = sign_params(
-        params
-    )
-
-    url = (
-        BASE_URL
-        + path
-    )
-
-    method = method.upper()
-
-    if method == "GET":
-        response = SESSION.get(
-            url,
-            params=signed,
-            headers=headers,
-            timeout=timeout,
-        )
-
-    elif method == "POST":
-        response = SESSION.post(
-            url,
-            params=signed,
-            headers=headers,
-            timeout=timeout,
-        )
-
-    elif method == "DELETE":
-        response = SESSION.delete(
-            url,
-            params=signed,
-            headers=headers,
-            timeout=timeout,
-        )
-
-    else:
-        raise ValueError(
-            f"Unsupported method: {method}"
-        )
-
-    if not response.ok:
-        raise RuntimeError(
-            f"Binance API "
-            f"{response.status_code}: "
-            f"{response.text[:500]}"
-        )
-
-    return response.json()
-
-
-def get_klines(
-    symbol,
-    interval,
-    limit=250,
-):
-    data = public_get(
-        "/fapi/v1/klines",
-        {
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit,
-        },
-    )
-
-    candles = []
-
-    for row in data:
-        candles.append(
-            {
-                "open_time": int(
-                    row[0]
-                ),
-                "open": safe_float(
-                    row[1]
-                ),
-                "high": safe_float(
-                    row[2]
-                ),
-                "low": safe_float(
-                    row[3]
-                ),
-                "close": safe_float(
-                    row[4]
-                ),
-                "volume": safe_float(
-                    row[5]
-                ),
-                "close_time": int(
-                    row[6]
-                ),
-            }
-        )
-
-    return candles
-
-
-def get_ticker_price(
-    symbol,
-):
-    data = public_get(
-        "/fapi/v1/ticker/price",
-        {
-            "symbol": symbol
-        },
-    )
-
-    return safe_float(
-        data.get("price")
-    )
-
-
-def get_funding_rate(
-    symbol,
-):
-    data = public_get(
-        "/fapi/v1/premiumIndex",
-        {
-            "symbol": symbol
-        },
-    )
-
-    return safe_float(
-        data.get(
-            "lastFundingRate"
-        )
-    )
-
-
-def get_exchange_info():
-    global EXCHANGE_INFO_CACHE
-    global EXCHANGE_INFO_TIME
-
-    if (
-        EXCHANGE_INFO_CACHE
-        and (
-            time.time()
-            - EXCHANGE_INFO_TIME
-            < 3600
-        )
-    ):
-        return (
-            EXCHANGE_INFO_CACHE
-        )
-
-    data = public_get(
-        "/fapi/v1/exchangeInfo"
-    )
-
-    EXCHANGE_INFO_CACHE = data
-    EXCHANGE_INFO_TIME = (
-        time.time()
-    )
-
-    SYMBOL_RULES.clear()
-
-    for symbol_info in data.get(
-        "symbols",
-        [],
-    ):
-        symbol = symbol_info.get(
-            "symbol"
-        )
-
-        if not symbol:
-            continue
-
-        filters = {}
-
-        for item in symbol_info.get(
-            "filters",
-            [],
-        ):
-            filters[
-                item.get("filterType")
-            ] = item
-
-        SYMBOL_RULES[
-            symbol
-        ] = {
-            "status":
-                symbol_info.get(
-                    "status"
-                ),
-            "quoteAsset":
-                symbol_info.get(
-                    "quoteAsset"
-                ),
-            "baseAsset":
-                symbol_info.get(
-                    "baseAsset"
-                ),
-            "filters":
-                filters,
-        }
-
-    return data
-
-
-def get_symbol_rules(
-    symbol,
-):
-    get_exchange_info()
-
-    rules = SYMBOL_RULES.get(
-        symbol
-    )
-
-    if not rules:
-        raise RuntimeError(
-            f"No exchange rules "
-            f"for {symbol}"
-        )
-
-    return rules
-
-
-def get_symbol_filters(
-    symbol,
-):
-    rules = get_symbol_rules(
-        symbol
-    )
-
-    return rules[
-        "filters"
-    ]
-
-
-def get_step_size(
-    symbol,
-):
-    filters = get_symbol_filters(
-        symbol
-    )
-
-    lot = filters.get(
-        "LOT_SIZE",
-        {},
-    )
-
-    return safe_float(
-        lot.get(
-            "stepSize"
-        ),
-        0.0,
-    )
-
-
-def get_min_qty(
-    symbol,
-):
-    filters = get_symbol_filters(
-        symbol
-    )
-
-    lot = filters.get(
-        "LOT_SIZE",
-        {},
-    )
-
-    return safe_float(
-        lot.get(
-            "minQty"
-        ),
-        0.0,
-    )
-
-
-def get_max_qty(
-    symbol,
-):
-    filters = get_symbol_filters(
-        symbol
-    )
-
-    lot = filters.get(
-        "LOT_SIZE",
-        {},
-    )
-
-    return safe_float(
-        lot.get(
-            "maxQty"
-        ),
-        0.0,
-    )
-
-
-def get_tick_size(
-    symbol,
-):
-    filters = get_symbol_filters(
-        symbol
-    )
-
-    price_filter = filters.get(
-        "PRICE_FILTER",
-        {},
-    )
-
-    return safe_float(
-        price_filter.get(
-            "tickSize"
-        ),
-        0.0,
-    )
-
-
-def get_min_notional(
-    symbol,
-):
-    filters = get_symbol_filters(
-        symbol
-    )
-
-    for key in (
-        "NOTIONAL",
-        "MIN_NOTIONAL",
-    ):
-        item = filters.get(
-            key
-        )
-
-        if item:
-            return safe_float(
-                item.get(
-                    "minNotional"
-                ),
-                0.0,
-            )
-
-    return 0.0
-
-
-def normalize_quantity(
-    symbol,
-    quantity,
-):
-    step = get_step_size(
-        symbol
-    )
-
-    minimum = get_min_qty(
-        symbol
-    )
-
-    maximum = get_max_qty(
-        symbol
-    )
-
-    if step <= 0:
-        return float(
-            quantity
-        )
-
-    quantity = round_down(
-        float(quantity),
-        step,
-    )
-
-    if minimum > 0:
-        quantity = max(
-            quantity,
-            minimum,
-        )
-
-    if maximum > 0:
-        quantity = min(
-            quantity,
-            maximum,
-        )
-
-    return quantity
-
-
-def normalize_price(
-    symbol,
-    price,
-):
-    tick = get_tick_size(
-        symbol
-    )
-
-    if tick <= 0:
-        return float(
-            price
-        )
-
-    return round_to_step(
-        float(price),
-        tick,
-    )
-
-
-# ============================================================
-# ACCOUNT
-# ============================================================
-
-def get_account_equity():
-    if not LIVE_TRADING:
-        return get_paper_equity()
-
-    data = signed_request(
-        "GET",
-        "/fapi/v2/account",
-    )
-
-    return safe_float(
-        data.get(
-            "totalWalletBalance"
-        ),
-        0.0,
-    )
-
-
-def get_available_balance():
-    if not LIVE_TRADING:
-        return get_paper_equity()
-
-    data = signed_request(
-        "GET",
-        "/fapi/v2/account",
-    )
-
-    return safe_float(
-        data.get(
-            "availableBalance"
-        ),
-        0.0,
-    )
-
-
-def get_positions():
-    if not LIVE_TRADING:
-        return []
-
-    return signed_request(
-        "GET",
-        "/fapi/v2/positionRisk",
-    )
-
-
-def get_open_live_positions():
-    positions = get_positions()
-
-    result = []
-
-    for position in positions:
-        amount = safe_float(
-            position.get(
-                "positionAmt"
-            )
-        )
-
-        if abs(amount) <= 0:
-            continue
-
         result.append(
-            position
+            adx_value
         )
 
     return result
 
 
-def get_live_position(
-    symbol,
-):
-    positions = get_positions()
-
-    for position in positions:
-        if (
-            position.get(
-                "symbol"
-            )
-            == symbol
-        ):
-            amount = safe_float(
-                position.get(
-                    "positionAmt"
-                )
-            )
-
-            if abs(amount) > 0:
-                return position
-
-    return None
-
-
-def get_position_side(
-    position,
-):
-    amount = safe_float(
-        position.get(
-            "positionAmt"
-        )
-    )
-
-    if amount > 0:
-        return "LONG"
-
-    if amount < 0:
-        return "SHORT"
-
-    return None
-
-
 # ============================================================
-# ORDER HELPERS
+# MARKET DATA
 # ============================================================
 
-def set_leverage(
-    symbol,
-    leverage,
-):
-    return signed_request(
-        "POST",
-        "/fapi/v1/leverage",
-        {
-            "symbol": symbol,
-            "leverage": int(
-                leverage
-            ),
-        },
+def parse_klines(raw):
+    candles = []
+
+    for row in raw:
+
+        candles.append({
+            "open_time": int(row[0]),
+            "open": float(row[1]),
+            "high": float(row[2]),
+            "low": float(row[3]),
+            "close": float(row[4]),
+            "volume": float(row[5]),
+            "close_time": int(row[6]),
+        })
+
+    # Remove currently forming candle.
+    now_ms = int(
+        time.time() * 1000
     )
 
+    candles = [
+        x for x in candles
+        if x["close_time"] < now_ms
+    ]
 
-def set_isolated_margin(
-    symbol,
-):
-    try:
-        return signed_request(
-            "POST",
-            "/fapi/v1/marginType",
-            {
-                "symbol": symbol,
-                "marginType":
-                    "ISOLATED",
-            },
-        )
-    except Exception as exc:
-        text = str(exc)
-
-        if (
-            "-4046" in text
-            or "No need to change"
-            in text
-        ):
-            return {
-                "status":
-                    "already_isolated"
-            }
-
-        raise
+    return candles
 
 
-def place_market_order(
-    symbol,
-    side,
-    quantity,
-):
-    return signed_request(
-        "POST",
-        "/fapi/v1/order",
-        {
-            "symbol": symbol,
-            "side": side,
-            "type": "MARKET",
-            "quantity":
-                format_number(
-                    quantity
-                ),
-            "newOrderRespType":
-                "RESULT",
-        },
+def get_market_snapshot(symbol):
+
+    raw_15m = BINANCE.get_klines(
+        symbol,
+        "15m",
+        KLINE_LIMIT
     )
 
-
-def place_stop_order(
-    symbol,
-    side,
-    stop_price,
-):
-    return signed_request(
-        "POST",
-        "/fapi/v1/order",
-        {
-            "symbol": symbol,
-            "side": side,
-            "type":
-                "STOP_MARKET",
-            "stopPrice":
-                format_number(
-                    stop_price
-                ),
-            "closePosition":
-                "true",
-            "workingType":
-                "MARK_PRICE",
-            "newClientOrderId":
-                f"{CLIENT_PREFIX}"
-                f"SL_"
-                f"{uuid.uuid4().hex[:10]}",
-        },
+    raw_1h = BINANCE.get_klines(
+        symbol,
+        "1h",
+        KLINE_LIMIT
     )
 
-
-def place_take_profit_order(
-    symbol,
-    side,
-    stop_price,
-):
-    return signed_request(
-        "POST",
-        "/fapi/v1/order",
-        {
-            "symbol": symbol,
-            "side": side,
-            "type":
-                "TAKE_PROFIT_MARKET",
-            "stopPrice":
-                format_number(
-                    stop_price
-                ),
-            "closePosition":
-                "true",
-            "workingType":
-                "MARK_PRICE",
-            "newClientOrderId":
-                f"{CLIENT_PREFIX}"
-                f"TP_"
-                f"{uuid.uuid4().hex[:10]}",
-        },
+    candles_15m = parse_klines(
+        raw_15m
     )
 
-
-def get_open_orders(
-    symbol=None,
-):
-    params = {}
-
-    if symbol:
-        params[
-            "symbol"
-        ] = symbol
-
-    return signed_request(
-        "GET",
-        "/fapi/v1/openOrders",
-        params,
+    candles_1h = parse_klines(
+        raw_1h
     )
 
+    if len(candles_15m) < 80:
+        return None
 
-def cancel_order(
-    symbol,
-    order_id,
-):
-    return signed_request(
-        "DELETE",
-        "/fapi/v1/order",
-        {
-            "symbol": symbol,
-            "orderId": order_id,
-        },
+    if len(candles_1h) < 80:
+        return None
+
+    return (
+        candles_15m,
+        candles_1h
     )
-
-
-def cancel_bot_orders(
-    symbol,
-):
-    orders = get_open_orders(
-        symbol
-    )
-
-    for order in orders:
-        client_id = order.get(
-            "clientOrderId",
-            "",
-        )
-
-        if client_id.startswith(
-            CLIENT_PREFIX
-        ):
-            try:
-                cancel_order(
-                    symbol,
-                    order.get(
-                        "orderId"
-                    ),
-                )
-            except Exception:
-                pass
 
 
 # ============================================================
 # SIGNAL ENGINE
 # ============================================================
 
-def prepare_candles(
-    candles,
-):
-    if not candles:
-        return None
+def calculate_signal(symbol):
 
-    # Remove currently forming candle.
-    if len(candles) >= 2:
-        candles = candles[:-1]
-
-    if len(candles) < 60:
-        return None
-
-    closes = [
-        c["close"]
-        for c in candles
-    ]
-
-    highs = [
-        c["high"]
-        for c in candles
-    ]
-
-    lows = [
-        c["low"]
-        for c in candles
-    ]
-
-    volumes = [
-        c["volume"]
-        for c in candles
-    ]
-
-    return {
-        "closes": closes,
-        "highs": highs,
-        "lows": lows,
-        "volumes": volumes,
-    }
-
-
-def average(
-    values,
-):
-    if not values:
-        return 0.0
-
-    return (
-        sum(values)
-        / len(values)
-    )
-
-
-def build_signal(
-    symbol,
-):
     try:
-        candles_15m = get_klines(
-            symbol,
-            "15m",
-            220,
+
+        snapshot = get_market_snapshot(
+            symbol
         )
 
-        candles_1h = get_klines(
-            symbol,
-            "1h",
-            220,
-        )
-
-        data15 = prepare_candles(
-            candles_15m
-        )
-
-        data1h = prepare_candles(
-            candles_1h
-        )
-
-        if not data15 or not data1h:
+        if not snapshot:
             return None
 
-        close15 = data15[
-            "closes"
+        candles_15m, candles_1h = snapshot
+
+        close15 = [
+            x["close"]
+            for x in candles_15m
         ]
 
-        high15 = data15[
-            "highs"
+        high15 = [
+            x["high"]
+            for x in candles_15m
         ]
 
-        low15 = data15[
-            "lows"
+        low15 = [
+            x["low"]
+            for x in candles_15m
         ]
 
-        volume15 = data15[
-            "volumes"
+        volume15 = [
+            x["volume"]
+            for x in candles_15m
         ]
 
-        close1h = data1h[
-            "closes"
+        close1h = [
+            x["close"]
+            for x in candles_1h
         ]
 
         ema20_15 = ema(
             close15,
-            20,
+            20
         )
 
         ema50_15 = ema(
             close15,
-            50,
+            50
         )
 
         ema20_1h = ema(
             close1h,
-            20,
+            20
         )
 
         ema50_1h = ema(
             close1h,
-            50,
+            50
         )
 
         rsi15 = rsi(
             close15,
-            14,
+            14
         )
 
         atr15 = atr(
             high15,
             low15,
             close15,
-            14,
+            14
         )
 
         adx15 = adx(
             high15,
             low15,
             close15,
-            14,
+            14
         )
 
-        if not (
-            ema20_15
-            and ema50_15
-            and ema20_1h
-            and ema50_1h
-            and rsi15
-            and atr15
-            and adx15
-        ):
+        if not all([
+            ema20_15,
+            ema50_15,
+            ema20_1h,
+            ema50_1h,
+            rsi15,
+            atr15,
+            adx15
+        ]):
             return None
 
-        last_close = close15[-1]
+        price = close15[-1]
 
-        previous_close = (
-            close15[-2]
-        )
+        e20_15 = ema20_15[-1]
+        e50_15 = ema50_15[-1]
 
-        last_ema20_15 = (
-            ema20_15[-1]
-        )
+        e20_1h = ema20_1h[-1]
+        e50_1h = ema50_1h[-1]
 
-        last_ema50_15 = (
-            ema50_15[-1]
-        )
-
-        last_ema20_1h = (
-            ema20_1h[-1]
-        )
-
-        last_ema50_1h = (
-            ema50_1h[-1]
-        )
-
-        last_rsi = rsi15[-1]
-
-        last_atr = atr15[-1]
-
-        last_adx = adx15[-1]
-
-        if (
-            last_atr is None
-            or last_adx is None
-        ):
-            return None
+        current_rsi = rsi15[-1]
+        current_atr = atr15[-1]
+        current_adx = adx15[-1]
 
         atr_pct = (
-            last_atr
-            / last_close
+            current_atr
+            / price
         )
 
-        volume_avg = average(
-            volume15[-21:-1]
-        )
-
-        if volume_avg <= 0:
+        if (
+            atr_pct < MIN_ATR_PCT
+            or atr_pct > MAX_ATR_PCT
+        ):
             return None
+
+        volume_avg = (
+            sum(volume15[-21:-1])
+            / 20
+        )
 
         volume_ratio = (
             volume15[-1]
             / volume_avg
+            if volume_avg > 0
+            else 0
         )
 
-        funding = get_funding_rate(
+        funding = BINANCE.get_funding(
             symbol
         )
 
-        # Funding returned by Binance
-        # is a decimal rate.
-        funding_pct = (
-            funding * 100.0
+        last_candle = candles_15m[-1]
+
+        previous_candle = candles_15m[-2]
+
+        bullish_candle = (
+            last_candle["close"]
+            > last_candle["open"]
+            and last_candle["close"]
+            > previous_candle["close"]
         )
 
-        long_score = 0
-        short_score = 0
+        bearish_candle = (
+            last_candle["close"]
+            < last_candle["open"]
+            and last_candle["close"]
+            < previous_candle["close"]
+        )
 
-        reasons_long = []
-        reasons_short = []
+        long_score = 0.0
+        short_score = 0.0
 
         # 1H trend
-        if (
-            last_ema20_1h
-            > last_ema50_1h
-        ):
+        if e20_1h > e50_1h:
             long_score += 2
-            reasons_long.append(
-                "1H uptrend"
-            )
-
-        elif (
-            last_ema20_1h
-            < last_ema50_1h
-        ):
+        elif e20_1h < e50_1h:
             short_score += 2
-            reasons_short.append(
-                "1H downtrend"
-            )
 
         # 15M trend
-        if (
-            last_ema20_15
-            > last_ema50_15
-        ):
+        if e20_15 > e50_15:
             long_score += 2
-            reasons_long.append(
-                "15M uptrend"
-            )
-
-        elif (
-            last_ema20_15
-            < last_ema50_15
-        ):
+        elif e20_15 < e50_15:
             short_score += 2
-            reasons_short.append(
-                "15M downtrend"
-            )
 
-        # RSI pullback
-        if (
-            42
-            <= last_rsi
-            <= 56
-            and last_close
-            > previous_close
-        ):
-            long_score += 2
-            reasons_long.append(
-                "RSI pullback"
-            )
+        # Pullback RSI
+        if 45 <= current_rsi <= 62:
+            long_score += 1
 
-        if (
-            44
-            <= last_rsi
-            <= 58
-            and last_close
-            < previous_close
-        ):
-            short_score += 2
-            reasons_short.append(
-                "RSI pullback"
-            )
+        if 38 <= current_rsi <= 55:
+            short_score += 1
 
         # Candle confirmation
-        if last_close > previous_close:
+        if bullish_candle:
             long_score += 1
-            reasons_long.append(
-                "bullish close"
-            )
 
-        elif last_close < previous_close:
+        if bearish_candle:
             short_score += 1
-            reasons_short.append(
-                "bearish close"
-            )
 
         # Volume
-        if volume_ratio >= 0.85:
+        if volume_ratio >= MIN_VOLUME_RATIO:
             long_score += 1
             short_score += 1
 
         # Funding extremes
-        if funding_pct <= -0.02:
-            long_score += 1
-            reasons_long.append(
-                "negative funding"
-            )
-
-        elif funding_pct >= 0.05:
+        if funding > 0.0008:
             short_score += 1
-            reasons_short.append(
-                "high funding"
-            )
 
-        # Market condition filters
-        if not (
-            0.0025
-            <= atr_pct
-            <= 0.04
+        if funding < -0.0008:
+            long_score += 1
+
+        # ADX
+        if current_adx >= MIN_ADX:
+            long_score += 1
+            short_score += 1
+
+        # Need clear winner
+        if long_score >= MIN_SCORE and (
+            long_score > short_score
         ):
-            return None
-
-        if last_adx < 18:
-            return None
-
-        if volume_ratio < 0.85:
-            return None
-
-        direction = None
-        score = 0
-        reasons = []
-
-        if (
-            long_score
-            >= MIN_SCORE
-            and long_score
-            > short_score
-        ):
-            direction = "LONG"
+            side = "LONG"
             score = long_score
-            reasons = reasons_long
 
-        elif (
-            short_score
-            >= MIN_SCORE
-            and short_score
-            > long_score
+        elif short_score >= MIN_SCORE and (
+            short_score > long_score
         ):
-            direction = "SHORT"
+            side = "SHORT"
             score = short_score
-            reasons = reasons_short
 
         else:
             return None
 
+        stop_distance = (
+            current_atr
+            * ATR_STOP_MULT
+        )
+
+        stop_pct = (
+            stop_distance
+            / price
+        )
+
+        stop_pct = max(
+            MIN_STOP_PCT,
+            min(
+                stop_pct,
+                MAX_STOP_PCT
+            )
+        )
+
+        if side == "LONG":
+
+            stop = (
+                price
+                * (1 - stop_pct)
+            )
+
+            tp = (
+                price
+                * (
+                    1
+                    + stop_pct
+                    * REWARD_R
+                )
+            )
+
+        else:
+
+            stop = (
+                price
+                * (1 + stop_pct)
+            )
+
+            tp = (
+                price
+                * (
+                    1
+                    - stop_pct
+                    * REWARD_R
+                )
+            )
+
         return {
             "symbol": symbol,
-            "direction": direction,
+            "side": side,
             "score": score,
-            "price": last_close,
-            "atr": last_atr,
+            "price": price,
+            "stop": stop,
+            "tp": tp,
+            "stop_pct": stop_pct,
+            "atr": current_atr,
             "atr_pct": atr_pct,
-            "adx": last_adx,
-            "rsi": last_rsi,
-            "volume_ratio":
-                volume_ratio,
-            "funding":
-                funding,
-            "funding_pct":
-                funding_pct,
-            "reasons": reasons,
+            "rsi": current_rsi,
+            "adx": current_adx,
+            "volume_ratio": volume_ratio,
+            "funding": funding,
+            "trend_1h": (
+                "BULLISH"
+                if e20_1h > e50_1h
+                else "BEARISH"
+            ),
+            "trend_15m": (
+                "BULLISH"
+                if e20_15 > e50_15
+                else "BEARISH"
+            ),
         }
 
-    except Exception as exc:
-        log(
-            "Signal error "
-            f"{symbol}: {exc}"
+    except Exception as e:
+
+        logger.exception(
+            "Signal error %s: %s",
+            symbol,
+            e
         )
 
         return None
 
+
 # ============================================================
-# RISK ENGINE
+# RISK MANAGER
 # ============================================================
 
-def calculate_stop_distance(
-    signal,
-):
-    atr_value = signal[
-        "atr"
-    ]
+def get_equity():
 
-    price = signal[
-        "price"
-    ]
+    if not LIVE_TRADING:
 
-    raw = (
-        atr_value
-        * ATR_STOP_MULT
+        value = get_state(
+            "paper_equity"
+        )
+
+        if value is None:
+            value = PAPER_START_EQUITY
+            set_state(
+                "paper_equity",
+                value
+            )
+
+        return float(value)
+
+    return BINANCE.get_equity()
+
+
+def get_day_key():
+    return datetime.now(
+        timezone.utc
+    ).strftime("%Y-%m-%d")
+
+
+def update_daily_state():
+
+    today = get_day_key()
+
+    saved_day = get_state(
+        "day"
     )
 
-    stop_pct = (
-        raw / price
+    if saved_day != today:
+
+        equity = get_equity()
+
+        set_state(
+            "day",
+            today
+        )
+
+        set_state(
+            "day_start_equity",
+            equity
+        )
+
+        set_state(
+            "daily_lock",
+            "0"
+        )
+
+
+def daily_locked():
+
+    update_daily_state()
+
+    equity = get_equity()
+
+    start = float(
+        get_state(
+            "day_start_equity",
+            equity
+        )
     )
 
-    stop_pct = clamp(
-        stop_pct,
-        MIN_STOP_PCT,
-        MAX_STOP_PCT,
-    )
+    if start <= 0:
+        return False
 
-    return stop_pct
+    drawdown = (
+        start - equity
+    ) / start
 
+    if drawdown >= MAX_DAILY_DRAWDOWN:
 
-def calculate_levels(
-    direction,
-    entry,
-    stop_pct,
-):
-    if direction == "LONG":
-        stop = (
-            entry
-            * (1.0 - stop_pct)
+        set_state(
+            "daily_lock",
+            "1"
         )
 
-        risk_distance = (
-            entry - stop
-        )
-
-        target = (
-            entry
-            + risk_distance
-            * REWARD_R
-        )
-
-    else:
-        stop = (
-            entry
-            * (1.0 + stop_pct)
-        )
-
-        risk_distance = (
-            stop - entry
-        )
-
-        target = (
-            entry
-            - risk_distance
-            * REWARD_R
-        )
+        return True
 
     return (
-        stop,
-        target,
-        risk_distance,
+        get_state(
+            "daily_lock",
+            "0"
+        ) == "1"
     )
 
 
 def calculate_quantity(
     symbol,
     entry,
-    stop_pct,
+    stop
 ):
-    equity = get_account_equity()
 
-    if equity <= 0:
-        return 0.0
+    equity = get_equity()
 
-    risk_amount = (
+    risk_usdt = (
         equity
         * RISK_PER_TRADE
     )
 
-    stop_pct = max(
-        stop_pct,
-        0.0001,
+    stop_distance = abs(
+        entry - stop
     )
 
-    notional = (
-        risk_amount
-        / stop_pct
+    if stop_distance <= 0:
+        return None
+
+    # Quantity needed to lose approximately
+    # RISK_PER_TRADE of equity at the stop.
+    quantity = (
+        risk_usdt
+        / stop_distance
+    )
+
+    filters = EXCHANGE_SYMBOLS[
+        symbol
+    ]
+
+    max_margin = (
+        equity
+        * MAX_MARGIN_PER_TRADE
     )
 
     max_notional = (
-        equity
-        * MAX_MARGIN_PER_TRADE
+        max_margin
         * LEVERAGE
     )
 
-    notional = min(
-        notional,
-        max_notional,
-    )
-
-    quantity = (
-        notional
+    max_quantity = (
+        max_notional
         / entry
     )
 
-    quantity = normalize_quantity(
-        symbol,
+    quantity = min(
         quantity,
+        max_quantity
     )
 
-    min_notional = (
-        get_min_notional(
-            symbol
+    quantity = round_qty(
+        symbol,
+        quantity
+    )
+
+    if quantity <= 0:
+        return None
+
+    if quantity < filters["min_qty"]:
+        return None
+
+    if filters["max_qty"] > 0:
+        quantity = min(
+            quantity,
+            filters["max_qty"]
         )
+
+    notional = (
+        quantity
+        * entry
     )
 
     if (
-        min_notional > 0
-        and quantity * entry
-        < min_notional
+        filters["min_notional"] > 0
+        and
+        notional
+        < filters["min_notional"]
     ):
-        quantity = normalize_quantity(
-            symbol,
-            (
-                min_notional
-                / entry
-            )
-            + get_step_size(
-                symbol
-            ),
-        )
+        return None
 
-    max_qty = get_max_qty(
-        symbol
-    )
-
-    if (
-        max_qty > 0
-        and quantity > max_qty
-    ):
-        quantity = max_qty
-
-    return quantity
+    return {
+        "qty": quantity,
+        "notional": notional,
+        "risk_usdt": (
+            stop_distance
+            * quantity
+        ),
+    }
 
 
 def current_margin_used():
-    if not LIVE_TRADING:
-        total = 0.0
 
-        for trade in get_open_trades():
+    if not LIVE_TRADING:
+
+        total = 0
+
+        for row in db_get_open_trades():
+
             total += (
-                abs(
-                    safe_float(
-                        trade["qty"]
-                    )
-                )
-                * safe_float(
-                    trade["entry"]
-                )
+                row["notional"]
                 / LEVERAGE
             )
 
         return total
 
-    positions = (
-        get_open_live_positions()
-    )
+    total = 0
 
-    total = 0.0
+    try:
 
-    for position in positions:
-        notional = abs(
-            safe_float(
-                position.get(
-                    "notional"
+        positions = (
+            BINANCE.get_position_risk()
+        )
+
+        for position in positions:
+
+            amt = abs(
+                float(
+                    position.get(
+                        "positionAmt",
+                        0
+                    )
                 )
             )
-        )
 
-        total += (
-            notional
-            / LEVERAGE
-        )
+            entry = float(
+                position.get(
+                    "entryPrice",
+                    0
+                )
+            )
+
+            if amt > 0 and entry > 0:
+                total += (
+                    amt
+                    * entry
+                    / LEVERAGE
+                )
+
+    except Exception:
+        pass
 
     return total
 
 
-def can_open_new_trade(
-    symbol,
-):
+def can_open_trade(symbol):
+
     if BOT_PAUSED:
-        return False, (
-            "bot paused"
-        )
+        return False, "BOT PAUSED"
 
-    if daily_drawdown_hit():
-        return False, (
-            "daily drawdown limit"
-        )
+    if EMERGENCY_STOP:
+        return False, "EMERGENCY STOP"
 
-    if global_cooldown_active():
-        return False, (
-            "global cooldown"
-        )
+    if daily_locked():
+        return False, "DAILY DRAWDOWN LOCK"
 
-    if symbol_cooldown_active(
-        symbol
-    ):
-        return False, (
-            "symbol cooldown"
+    open_trades = (
+        db_get_open_trades()
+    )
+
+    if len(open_trades) >= MAX_OPEN_POSITIONS:
+        return False, "MAX POSITIONS"
+
+    if db_get_open_trade(symbol):
+        return False, "SYMBOL ALREADY OPEN"
+
+    global_last = float(
+        get_state(
+            "last_global_entry",
+            "0"
         )
+    )
 
     if (
-        count_open_positions()
-        >= MAX_OPEN_POSITIONS
+        global_last > 0
+        and
+        time.time() - global_last
+        <
+        GLOBAL_ENTRY_COOLDOWN_MINUTES
+        * 60
     ):
-        return False, (
-            "max positions"
-        )
+        return False, "GLOBAL COOLDOWN"
 
-    equity = get_account_equity()
-
-    if equity <= 0:
-        return False, (
-            "no equity"
+    last_symbol = float(
+        get_state(
+            f"last_entry_{symbol}",
+            "0"
         )
+    )
+
+    if (
+        last_symbol > 0
+        and
+        time.time() - last_symbol
+        <
+        COOLDOWN_MINUTES
+        * 60
+    ):
+        return False, "SYMBOL COOLDOWN"
+
+    equity = get_equity()
 
     margin = (
         current_margin_used()
@@ -3167,2288 +1972,1956 @@ def can_open_new_trade(
         * MAX_TOTAL_MARGIN
     )
 
-    if (
-        margin
-        >= max_total_margin
-    ):
-        return False, (
-            "max total margin"
-        )
+    if margin >= max_total_margin:
+        return False, "MAX TOTAL MARGIN"
 
-    return True, "ok"
+    return True, "OK"
 
 
 # ============================================================
-# COOLDOWNS / RISK LIMITS
+# LIVE ORDER MANAGEMENT
 # ============================================================
 
-def count_open_positions():
-    if not LIVE_TRADING:
-        return len(
-            get_open_trades()
-        )
+def open_live_trade(signal):
 
-    return len(
-        get_open_live_positions()
+    symbol = signal["symbol"]
+    side = signal["side"]
+
+    entry_reference = (
+        BINANCE.get_price(symbol)
     )
 
+    stop = signal["stop"]
+    tp = signal["tp"]
 
-def symbol_cooldown_active(
-    symbol,
-):
-    key = (
-        f"cooldown_{symbol}"
-    )
-
-    value = state_get(
-        key
-    )
-
-    if not value:
-        return False
-
-    last_time = safe_float(
-        value,
-        0.0,
-    )
-
-    elapsed = (
-        time.time()
-        - last_time
-    )
-
-    return (
-        elapsed
-        < COOLDOWN_MINUTES * 60
-    )
-
-
-def set_symbol_cooldown(
-    symbol,
-):
-    state_set(
-        f"cooldown_{symbol}",
-        time.time(),
-    )
-
-
-def global_cooldown_active():
-    value = state_get(
-        "last_entry_time"
-    )
-
-    if not value:
-        return False
-
-    elapsed = (
-        time.time()
-        - safe_float(
-            value,
-            0.0,
-        )
-    )
-
-    return (
-        elapsed
-        < GLOBAL_ENTRY_COOLDOWN_MINUTES
-        * 60
-    )
-
-
-def set_global_cooldown():
-    state_set(
-        "last_entry_time",
-        time.time(),
-    )
-
-
-def daily_drawdown_hit():
-    start_equity = (
-        get_day_start_equity()
-    )
-
-    current_equity = (
-        get_account_equity()
-    )
-
-    if start_equity <= 0:
-        return True
-
-    drawdown = (
-        (
-            start_equity
-            - current_equity
-        )
-        / start_equity
-    )
-
-    return (
-        drawdown
-        >= MAX_DAILY_DRAWDOWN
-    )
-
-# ============================================================
-# PAPER TRADING
-# ============================================================
-
-def paper_open_trade(
-    signal,
-):
-    symbol = signal[
-        "symbol"
-    ]
-
-    direction = signal[
-        "direction"
-    ]
-
-    entry = signal[
-        "price"
-    ]
-
-    stop_pct = (
-        calculate_stop_distance(
-            signal
-        )
-    )
-
-    stop, target, risk_distance = (
-        calculate_levels(
-            direction,
-            entry,
-            stop_pct,
-        )
-    )
-
-    quantity = (
-        calculate_quantity(
-            symbol,
-            entry,
-            stop_pct,
-        )
-    )
-
-    if quantity <= 0:
-        return False
-
-    side = direction
-
-    trade_id = add_trade(
-        symbol=symbol,
-        side=side,
-        entry=entry,
-        stop=stop,
-        target=target,
-        qty=quantity,
-        status="OPEN",
-    )
-
-    set_global_cooldown()
-
-    set_symbol_cooldown(
-        symbol
-    )
-
-    telegram_send(
-        "🟢 PAPER ENTRY\n"
-        f"{symbol}\n"
-        f"{direction}\n"
-        f"Entry: {entry:.6f}\n"
-        f"SL: {stop:.6f}\n"
-        f"TP: {target:.6f}\n"
-        f"Qty: {quantity}\n"
-        f"Score: {signal['score']}\n"
-        f"RSI: {signal['rsi']:.1f}\n"
-        f"ADX: {signal['adx']:.1f}\n"
-        f"Funding: "
-        f"{signal['funding_pct']:.4f}%\n"
-        f"Reason: "
-        f"{', '.join(signal['reasons'])}"
-    )
-
-    log(
-        f"PAPER ENTRY "
-        f"{symbol} "
-        f"{direction} "
-        f"entry={entry} "
-        f"sl={stop} "
-        f"tp={target}"
-    )
-
-    return True
-
-
-def paper_close_trade(
-    trade,
-    exit_price,
-    reason,
-):
-    entry = safe_float(
-        trade["entry"]
-    )
-
-    stop = safe_float(
-        trade["stop"]
-    )
-
-    quantity = safe_float(
-        trade["qty"]
-    )
-
-    side = trade["side"]
-
-    if side == "LONG":
-        pnl = (
-            exit_price
-            - entry
-        ) * quantity
-
-        risk = (
-            entry
-            - stop
-        ) * quantity
-
-    else:
-        pnl = (
-            entry
-            - exit_price
-        ) * quantity
-
-        risk = (
-            stop
-            - entry
-        ) * quantity
-
-    r_multiple = (
-        pnl / risk
-        if risk > 0
-        else 0.0
-    )
-
-    equity = (
-        get_paper_equity()
-    )
-
-    equity += pnl
-
-    set_paper_equity(
-        equity
-    )
-
-    close_trade(
-        trade["id"],
-        pnl=pnl,
-        r_multiple=r_multiple,
-        reason=reason,
-    )
-
-    telegram_send(
-        "🔴 PAPER EXIT\n"
-        f"{trade['symbol']}\n"
-        f"Reason: {reason}\n"
-        f"Entry: {entry:.6f}\n"
-        f"Exit: {exit_price:.6f}\n"
-        f"PnL: {pnl:+.2f} USDT\n"
-        f"R: {r_multiple:+.2f}\n"
-        f"Equity: {equity:.2f}"
-    )
-
-    log(
-        f"PAPER EXIT "
-        f"{trade['symbol']} "
-        f"{reason} "
-        f"pnl={pnl:.4f}"
-    )
-
-
-def manage_paper_trades():
-    trades = (
-        get_open_trades()
-    )
-
-    for trade in trades:
-        symbol = trade[
-            "symbol"
-        ]
-
-        price = (
-            get_ticker_price(
-                symbol
-            )
-        )
-
-        if price <= 0:
-            continue
-
-        entry = safe_float(
-            trade["entry"]
-        )
-
-        stop = safe_float(
-            trade["stop"]
-        )
-
-        target = safe_float(
-            trade["target"]
-        )
-
-        side = trade[
-            "side"
-        ]
-
-        risk_distance = abs(
-            entry - stop
-        )
-
-        if risk_distance <= 0:
-            continue
-
-        if side == "LONG":
-            current_r = (
-                price - entry
-            ) / risk_distance
-
-            if price <= stop:
-                paper_close_trade(
-                    trade,
-                    stop,
-                    "STOP",
-                )
-                continue
-
-            if price >= target:
-                paper_close_trade(
-                    trade,
-                    target,
-                    "TAKE_PROFIT",
-                )
-                continue
-
-        else:
-            current_r = (
-                entry - price
-            ) / risk_distance
-
-            if price >= stop:
-                paper_close_trade(
-                    trade,
-                    stop,
-                    "STOP",
-                )
-                continue
-
-            if price <= target:
-                paper_close_trade(
-                    trade,
-                    target,
-                    "TAKE_PROFIT",
-                )
-                continue
-
-        # Move stop to protected profit
-        # after +1R.
-        if (
-            current_r
-            >= BREAK_EVEN_R
-        ):
-            if side == "LONG":
-                new_stop = max(
-                    stop,
-                    entry
-                    * (
-                        1.0
-                        + BE_LOCK_PCT
-                    ),
-                )
-
-            else:
-                new_stop = min(
-                    stop,
-                    entry
-                    * (
-                        1.0
-                        - BE_LOCK_PCT
-                    ),
-                )
-
-            if (
-                new_stop
-                != stop
-            ):
-                conn = db_connect()
-
-                cursor = conn.cursor()
-
-                cursor.execute(
-                    """
-                    UPDATE trades
-                    SET stop = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        new_stop,
-                        trade["id"],
-                    ),
-                )
-
-                conn.commit()
-                conn.close()
-
-                stop = new_stop
-
-        # ATR trailing after +1.5R.
-        if (
-            current_r
-            >= TRAIL_START_R
-        ):
-            candles = (
-                get_klines(
-                    symbol,
-                    "15m",
-                    80,
-                )
-            )
-
-            prepared = (
-                prepare_candles(
-                    candles
-                )
-            )
-
-            if prepared:
-                atr_values = atr(
-                    prepared[
-                        "highs"
-                    ],
-                    prepared[
-                        "lows"
-                    ],
-                    prepared[
-                        "closes"
-                    ],
-                    14,
-                )
-
-                if (
-                    atr_values
-                    and atr_values[-1]
-                    is not None
-                ):
-                    trail_atr = (
-                        atr_values[-1]
-                        * TRAIL_ATR_MULT
-                    )
-
-                    if side == "LONG":
-                        trail_stop = (
-                            price
-                            - trail_atr
-                        )
-
-                        new_stop = max(
-                            stop,
-                            trail_stop,
-                        )
-
-                    else:
-                        trail_stop = (
-                            price
-                            + trail_atr
-                        )
-
-                        new_stop = min(
-                            stop,
-                            trail_stop,
-                        )
-
-                    if (
-                        new_stop
-                        != stop
-                    ):
-                        conn = db_connect()
-
-                        cursor = conn.cursor()
-
-                        cursor.execute(
-                            """
-                            UPDATE trades
-                            SET stop = ?
-                            WHERE id = ?
-                            """,
-                            (
-                                new_stop,
-                                trade["id"],
-                            ),
-                        )
-
-                        conn.commit()
-                        conn.close()
-
-        # Refresh the loop after
-        # possible stop movement.
-
-# ============================================================
-# LIVE TRADING
-# ============================================================
-
-def wait_for_live_position(
-    symbol,
-    attempts=10,
-    delay=0.5,
-):
-    for _ in range(
-        attempts
-    ):
-        position = (
-            get_live_position(
-                symbol
-            )
-        )
-
-        if position:
-            entry = safe_float(
-                position.get(
-                    "entryPrice"
-                )
-            )
-
-            amount = safe_float(
-                position.get(
-                    "positionAmt"
-                )
-            )
-
-            if (
-                abs(amount) > 0
-                and entry > 0
-            ):
-                return position
-
-        time.sleep(
-            delay
-        )
-
-    return None
-
-
-def live_open_trade(
-    signal,
-):
-    symbol = signal[
-        "symbol"
-    ]
-
-    direction = signal[
-        "direction"
-    ]
-
-    entry_reference = signal[
-        "price"
-    ]
-
-    stop_pct = (
-        calculate_stop_distance(
-            signal
-        )
-    )
-
-    quantity = (
+    quantity_data = (
         calculate_quantity(
             symbol,
             entry_reference,
-            stop_pct,
+            stop
         )
     )
 
-    if quantity <= 0:
-        log(
-            f"Invalid quantity "
-            f"for {symbol}"
+    if not quantity_data:
+        raise RuntimeError(
+            f"{symbol}: quantity too small "
+            f"or violates exchange filters"
         )
 
-        return False
+    qty = quantity_data["qty"]
+
+    BINANCE.set_margin_type(
+        symbol
+    )
+
+    BINANCE.set_leverage(
+        symbol,
+        LEVERAGE
+    )
+
+    order_side = (
+        "BUY"
+        if side == "LONG"
+        else "SELL"
+    )
+
+    logger.info(
+        "LIVE ENTRY %s %s qty=%s",
+        symbol,
+        side,
+        qty
+    )
+
+    entry_order = BINANCE.place_order({
+        "symbol": symbol,
+        "side": order_side,
+        "type": "MARKET",
+        "quantity": qty,
+        "newOrderRespType": "RESULT",
+    })
+
+    time.sleep(0.5)
+
+    actual_entry = (
+        get_actual_entry_price(
+            symbol
+        )
+    )
+
+    if actual_entry <= 0:
+        actual_entry = (
+            float(
+                entry_order.get(
+                    "avgPrice",
+                    entry_reference
+                )
+            )
+        )
+
+    # Recalculate stop / TP from actual entry.
+    stop_pct = signal["stop_pct"]
+
+    if side == "LONG":
+
+        stop = (
+            actual_entry
+            * (1 - stop_pct)
+        )
+
+        tp = (
+            actual_entry
+            * (
+                1
+                + stop_pct
+                * REWARD_R
+            )
+        )
+
+        sl_side = "SELL"
+
+    else:
+
+        stop = (
+            actual_entry
+            * (1 + stop_pct)
+        )
+
+        tp = (
+            actual_entry
+            * (
+                1
+                - stop_pct
+                * REWARD_R
+            )
+        )
+
+        sl_side = "BUY"
+
+    stop_direction = (
+        "down"
+        if side == "LONG"
+        else "up"
+    )
+
+    tp_direction = (
+        "up"
+        if side == "LONG"
+        else "down"
+    )
+
+    stop = round_price(
+        symbol,
+        stop,
+        stop_direction
+    )
+
+    tp = round_price(
+        symbol,
+        tp,
+        tp_direction
+    )
 
     try:
-        set_isolated_margin(
+
+        BINANCE.place_order({
+            "symbol": symbol,
+            "side": sl_side,
+            "type": "STOP_MARKET",
+            "stopPrice": stop,
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+            "priceProtect": "false",
+            "newClientOrderId":
+                f"SNPR_SL_{int(time.time()*1000)}",
+        })
+
+        BINANCE.place_order({
+            "symbol": symbol,
+            "side": sl_side,
+            "type": "TAKE_PROFIT_MARKET",
+            "stopPrice": tp,
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+            "priceProtect": "false",
+            "newClientOrderId":
+                f"SNPR_TP_{int(time.time()*1000)}",
+        })
+
+    except Exception:
+
+        logger.exception(
+            "PROTECTION FAILED: %s",
             symbol
         )
 
-        set_leverage(
+        emergency_close_symbol(
             symbol,
-            LEVERAGE,
+            side
         )
 
-        order_side = (
-            "BUY"
-            if direction == "LONG"
-            else "SELL"
-        )
+        raise
 
-        result = (
-            place_market_order(
-                symbol,
-                order_side,
-                quantity,
-            )
-        )
+    notional = (
+        qty
+        * actual_entry
+    )
 
-        position = (
-            wait_for_live_position(
-                symbol
-            )
-        )
+    risk = abs(
+        actual_entry
+        - stop
+    ) * qty
 
-        if not position:
-            raise RuntimeError(
-                "Position not detected "
-                "after market entry"
-            )
+    trade_id = db_open_trade(
+        symbol=symbol,
+        side=side,
+        mode="LIVE",
+        entry=actual_entry,
+        stop=stop,
+        tp=tp,
+        qty=qty,
+        notional=notional,
+        risk_usdt=risk,
+    )
 
-        actual_entry = safe_float(
+    set_state(
+        "last_global_entry",
+        time.time()
+    )
+
+    set_state(
+        f"last_entry_{symbol}",
+        time.time()
+    )
+
+    return {
+        "trade_id": trade_id,
+        "entry": actual_entry,
+        "stop": stop,
+        "tp": tp,
+        "qty": qty,
+        "notional": notional,
+        "risk": risk,
+    }
+
+
+def get_actual_entry_price(symbol):
+
+    positions = (
+        BINANCE.get_position_risk()
+    )
+
+    for position in positions:
+
+        if position.get(
+            "symbol"
+        ) != symbol:
+            continue
+
+        amount = float(
             position.get(
-                "entryPrice"
+                "positionAmt",
+                0
             )
         )
 
-        actual_qty = abs(
-            safe_float(
+        if abs(amount) > 0:
+
+            return float(
                 position.get(
-                    "positionAmt"
+                    "entryPrice",
+                    0
                 )
             )
-        )
 
-        if actual_entry <= 0:
-            actual_entry = (
-                entry_reference
-            )
-
-        if actual_qty <= 0:
-            actual_qty = quantity
-
-        stop, target, risk_distance = (
-            calculate_levels(
-                direction,
-                actual_entry,
-                stop_pct,
-            )
-        )
-
-        stop = normalize_price(
-            symbol,
-            stop,
-        )
-
-        target = normalize_price(
-            symbol,
-            target,
-        )
-
-        protection_side = (
-            "SELL"
-            if direction == "LONG"
-            else "BUY"
-        )
-
-        try:
-            place_stop_order(
-                symbol,
-                protection_side,
-                stop,
-            )
-
-            place_take_profit_order(
-                symbol,
-                protection_side,
-                target,
-            )
-
-        except Exception as protection_error:
-            log(
-                f"Protection failed "
-                f"{symbol}: "
-                f"{protection_error}"
-            )
-
-            try:
-                emergency_close_symbol(
-                    symbol
-                )
-            except Exception:
-                pass
-
-            return False
-
-        add_trade(
-            symbol=symbol,
-            side=direction,
-            entry=actual_entry,
-            stop=stop,
-            target=target,
-            qty=actual_qty,
-            status="OPEN",
-        )
-
-        set_global_cooldown()
-
-        set_symbol_cooldown(
-            symbol
-        )
-
-        telegram_send(
-            "🟢 LIVE ENTRY\n"
-            f"{symbol}\n"
-            f"{direction}\n"
-            f"Entry: "
-            f"{actual_entry:.6f}\n"
-            f"SL: {stop:.6f}\n"
-            f"TP: {target:.6f}\n"
-            f"Qty: {actual_qty}\n"
-            f"Score: "
-            f"{signal['score']}\n"
-            f"RSI: "
-            f"{signal['rsi']:.1f}\n"
-            f"ADX: "
-            f"{signal['adx']:.1f}\n"
-            f"Funding: "
-            f"{signal['funding_pct']:.4f}%"
-        )
-
-        log(
-            f"LIVE ENTRY "
-            f"{symbol} "
-            f"{direction} "
-            f"entry={actual_entry} "
-            f"sl={stop} "
-            f"tp={target}"
-        )
-
-        return True
-
-    except Exception as exc:
-        log(
-            f"Live entry error "
-            f"{symbol}: {exc}"
-        )
-
-        try:
-            emergency_close_symbol(
-                symbol
-            )
-        except Exception:
-            pass
-
-        return False
+    return 0.0
 
 
 def emergency_close_symbol(
     symbol,
+    side
 ):
-    position = (
-        get_live_position(
-            symbol
-        )
-    )
 
-    if not position:
-        return False
-
-    amount = safe_float(
-        position.get(
-            "positionAmt"
-        )
-    )
-
-    if amount == 0:
-        return False
-
-    side = (
-        "SELL"
-        if amount > 0
-        else "BUY"
-    )
-
-    quantity = abs(
-        amount
-    )
-
-    quantity = normalize_quantity(
-        symbol,
-        quantity,
-    )
-
-    if quantity <= 0:
-        return False
-
-    cancel_bot_orders(
-        symbol
-    )
-
-    place_market_order(
-        symbol,
-        side,
-        quantity,
-    )
-
-    return True
-
-
-def calculate_r_multiple(
-    side,
-    entry,
-    stop,
-    price,
-):
-    risk = abs(
-        entry - stop
-    )
-
-    if risk <= 0:
-        return 0.0
-
-    if side == "LONG":
-        return (
-            price - entry
-        ) / risk
-
-    return (
-        entry - price
-    ) / risk
-
-
-def update_trade_stop(
-    trade_id,
-    new_stop,
-):
-    conn = db_connect()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        UPDATE trades
-        SET stop = ?
-        WHERE id = ?
-        """,
-        (
-            new_stop,
-            trade_id,
-        ),
-    )
-
-    conn.commit()
-    conn.close()
-
-
-def replace_live_protection(
-    symbol,
-    side,
-    stop,
-    target,
-):
-    cancel_bot_orders(
-        symbol
-    )
-
-    protection_side = (
+    close_side = (
         "SELL"
         if side == "LONG"
         else "BUY"
     )
 
-    place_stop_order(
-        symbol,
-        protection_side,
-        stop,
-    )
+    try:
 
-    place_take_profit_order(
-        symbol,
-        protection_side,
-        target,
-    )
+        BINANCE.place_order({
+            "symbol": symbol,
+            "side": close_side,
+            "type": "MARKET",
+            "quantity": abs(
+                get_position_amount(
+                    symbol
+                )
+            ),
+            "reduceOnly": "true",
+            "newOrderRespType": "RESULT",
+        })
 
+    except Exception as e:
 
-def manage_live_positions():
-    positions = (
-        get_open_live_positions()
-    )
-
-    live_symbols = {
-        position.get(
-            "symbol"
+        logger.error(
+            "Emergency close failed %s: %s",
+            symbol,
+            e
         )
-        for position in positions
+
+
+def get_position_amount(symbol):
+
+    positions = (
+        BINANCE.get_position_risk()
+    )
+
+    for p in positions:
+
+        if p.get("symbol") == symbol:
+            return float(
+                p.get(
+                    "positionAmt",
+                    0
+                )
+            )
+
+    return 0.0
+
+
+# ============================================================
+# PAPER TRADING
+# ============================================================
+
+def paper_open_trade(signal):
+
+    symbol = signal["symbol"]
+    side = signal["side"]
+
+    entry = signal["price"]
+    stop = signal["stop"]
+    tp = signal["tp"]
+
+    quantity_data = (
+        calculate_quantity(
+            symbol,
+            entry,
+            stop
+        )
+    )
+
+    if not quantity_data:
+        raise RuntimeError(
+            f"{symbol}: paper quantity invalid"
+        )
+
+    qty = quantity_data["qty"]
+    notional = (
+        qty * entry
+    )
+
+    risk = (
+        abs(entry - stop)
+        * qty
+    )
+
+    trade_id = db_open_trade(
+        symbol=symbol,
+        side=side,
+        mode="PAPER",
+        entry=entry,
+        stop=stop,
+        tp=tp,
+        qty=qty,
+        notional=notional,
+        risk_usdt=risk,
+    )
+
+    set_state(
+        "last_global_entry",
+        time.time()
+    )
+
+    set_state(
+        f"last_entry_{symbol}",
+        time.time()
+    )
+
+    return {
+        "trade_id": trade_id,
+        "entry": entry,
+        "stop": stop,
+        "tp": tp,
+        "qty": qty,
+        "notional": notional,
+        "risk": risk,
     }
 
-    # Reconcile positions that
-    # disappeared from Binance.
-    for trade in get_open_trades():
-        symbol = trade[
-            "symbol"
-        ]
 
-        if symbol not in live_symbols:
-            close_trade(
-                trade["id"],
-                pnl=0.0,
-                r_multiple=0.0,
-                reason="EXTERNAL",
-            )
+def close_paper_trade(
+    row,
+    exit_price,
+    reason
+):
 
-            set_symbol_cooldown(
-                symbol
-            )
+    if row["side"] == "LONG":
 
-            cancel_bot_orders(
-                symbol
-            )
+        pnl = (
+            exit_price
+            - row["entry"]
+        ) * row["qty"]
 
-    for position in positions:
-        symbol = position.get(
-            "symbol"
+    else:
+
+        pnl = (
+            row["entry"]
+            - exit_price
+        ) * row["qty"]
+
+    # Approximate trading fee.
+    fee_rate = 0.0005
+
+    fees = (
+        (
+            row["entry"]
+            + exit_price
         )
-
-        amount = safe_float(
-            position.get(
-                "positionAmt"
-            )
-        )
-
-        entry = safe_float(
-            position.get(
-                "entryPrice"
-            )
-        )
-
-        mark_price = safe_float(
-            position.get(
-                "markPrice"
-            )
-        )
-
-        side = get_position_side(
-            position
-        )
-
-        if (
-            not symbol
-            or entry <= 0
-            or mark_price <= 0
-            or side is None
-        ):
-            continue
-
-        trades = [
-            trade
-            for trade in get_open_trades()
-            if trade["symbol"]
-            == symbol
-        ]
-
-        if not trades:
-            continue
-
-        trade = trades[0]
-
-        stop = safe_float(
-            trade["stop"]
-        )
-
-        target = safe_float(
-            trade["target"]
-        )
-
-        r_multiple = (
-            calculate_r_multiple(
-                side,
-                entry,
-                stop,
-                mark_price,
-            )
-        )
-
-        # Move to small profit
-        # after +1R.
-        if (
-            r_multiple
-            >= BREAK_EVEN_R
-        ):
-            if side == "LONG":
-                new_stop = max(
-                    stop,
-                    entry
-                    * (
-                        1
-                        + BE_LOCK_PCT
-                    ),
-                )
-
-            else:
-                new_stop = min(
-                    stop,
-                    entry
-                    * (
-                        1
-                        - BE_LOCK_PCT
-                    ),
-                )
-
-            new_stop = normalize_price(
-                symbol,
-                new_stop,
-            )
-
-            if (
-                (
-                    side == "LONG"
-                    and new_stop > stop
-                )
-                or
-                (
-                    side == "SHORT"
-                    and new_stop < stop
-                )
-            ):
-                try:
-                    replace_live_protection(
-                        symbol,
-                        side,
-                        new_stop,
-                        target,
-                    )
-
-                    update_trade_stop(
-                        trade["id"],
-                        new_stop,
-                    )
-
-                    stop = new_stop
-
-                    telegram_send(
-                        "🛡️ STOP MOVED\n"
-                        f"{symbol}\n"
-                        f"{side}\n"
-                        f"New SL: "
-                        f"{new_stop:.6f}\n"
-                        f"R: "
-                        f"{r_multiple:.2f}"
-                    )
-
-                except Exception as exc:
-                    log(
-                        f"Stop update "
-                        f"error {symbol}: "
-                        f"{exc}"
-                    )
-
-        # ATR trailing after +1.5R.
-        if (
-            r_multiple
-            >= TRAIL_START_R
-        ):
-            try:
-                candles = (
-                    get_klines(
-                        symbol,
-                        "15m",
-                        80,
-                    )
-                )
-
-                prepared = (
-                    prepare_candles(
-                        candles
-                    )
-                )
-
-                if prepared:
-                    atr_values = atr(
-                        prepared[
-                            "highs"
-                        ],
-                        prepared[
-                            "lows"
-                        ],
-                        prepared[
-                            "closes"
-                        ],
-                        14,
-                    )
-
-                    if (
-                        atr_values
-                        and atr_values[-1]
-                        is not None
-                    ):
-                        trail_distance = (
-                            atr_values[-1]
-                            * TRAIL_ATR_MULT
-                        )
-
-                        if side == "LONG":
-                            candidate = (
-                                mark_price
-                                - trail_distance
-                            )
-
-                            new_stop = max(
-                                stop,
-                                candidate,
-                            )
-
-                        else:
-                            candidate = (
-                                mark_price
-                                + trail_distance
-                            )
-
-                            new_stop = min(
-                                stop,
-                                candidate,
-                            )
-
-                        new_stop = normalize_price(
-                            symbol,
-                            new_stop,
-                        )
-
-                        should_update = (
-                            (
-                                side == "LONG"
-                                and new_stop
-                                > stop
-                            )
-                            or
-                            (
-                                side == "SHORT"
-                                and new_stop
-                                < stop
-                            )
-                        )
-
-                        if should_update:
-                            replace_live_protection(
-                                symbol,
-                                side,
-                                new_stop,
-                                target,
-                            )
-
-                            update_trade_stop(
-                                trade["id"],
-                                new_stop,
-                            )
-
-                            telegram_send(
-                                "📈 TRAILING SL\n"
-                                f"{symbol}\n"
-                                f"{side}\n"
-                                f"New SL: "
-                                f"{new_stop:.6f}\n"
-                                f"R: "
-                                f"{r_multiple:.2f}"
-                            )
-
-            except Exception as exc:
-                log(
-                    f"Trailing error "
-                    f"{symbol}: {exc}"
-                )
-
-
-# ============================================================
-# SIGNAL SCANNER
-# ============================================================
-
-def available_symbols():
-    try:
-        get_exchange_info()
-    except Exception as exc:
-        log(
-            f"Exchange info error: "
-            f"{exc}"
-        )
-
-        return []
-
-    result = []
-
-    for symbol in SYMBOLS:
-        rules = SYMBOL_RULES.get(
-            symbol
-        )
-
-        if not rules:
-            continue
-
-        if (
-            rules.get("status")
-            != "TRADING"
-        ):
-            continue
-
-        if (
-            rules.get(
-                "quoteAsset"
-            )
-            != "USDT"
-        ):
-            continue
-
-        result.append(
-            symbol
-        )
-
-    return result
-
-
-def scan_for_best_signal():
-    candidates = []
-
-    symbols = (
-        available_symbols()
+        * row["qty"]
+        * fee_rate
     )
 
-    for symbol in symbols:
-        if (
-            symbol_cooldown_active(
-                symbol
-            )
-        ):
+    net_pnl = (
+        pnl - fees
+    )
+
+    current_equity = (
+        get_equity()
+    )
+
+    new_equity = (
+        current_equity
+        + net_pnl
+    )
+
+    set_state(
+        "paper_equity",
+        new_equity
+    )
+
+    db_close_trade(
+        trade_id=row["id"],
+        exit_price=exit_price,
+        pnl=net_pnl,
+        result=reason,
+    )
+
+    telegram_send(
+        f"🔔 <b>PAPER TRADE CLOSED</b>\n\n"
+        f"{row['symbol']} "
+        f"{row['side']}\n"
+        f"Entry: <code>{row['entry']:.6g}</code>\n"
+        f"Exit: <code>{exit_price:.6g}</code>\n"
+        f"PnL: <b>{net_pnl:+.2f} USDT</b>\n"
+        f"Reason: {reason}\n"
+        f"Paper equity: "
+        f"<b>{new_equity:.2f} USDT</b>"
+    )
+
+
+def manage_paper_positions():
+
+    rows = db_get_open_trades()
+
+    for row in rows:
+
+        if row["mode"] != "PAPER":
             continue
 
-        signal = build_signal(
+        try:
+
+            price = BINANCE.get_price(
+                row["symbol"]
+            )
+
+            if row["side"] == "LONG":
+
+                if price <= row["stop"]:
+
+                    close_paper_trade(
+                        row,
+                        row["stop"],
+                        "STOP LOSS"
+                    )
+
+                elif price >= row["tp"]:
+
+                    close_paper_trade(
+                        row,
+                        row["tp"],
+                        "TAKE PROFIT"
+                    )
+
+            else:
+
+                if price >= row["stop"]:
+
+                    close_paper_trade(
+                        row,
+                        row["stop"],
+                        "STOP LOSS"
+                    )
+
+                elif price <= row["tp"]:
+
+                    close_paper_trade(
+                        row,
+                        row["tp"],
+                        "TAKE PROFIT"
+                    )
+
+        except Exception as e:
+
+            logger.error(
+                "Paper position error: %s",
+                e
+            )
+
+
+# ============================================================
+# POSITION MANAGEMENT
+# ============================================================
+
+def manage_live_positions():
+
+    if not LIVE_TRADING:
+        return
+
+    try:
+
+        positions = (
+            BINANCE.get_position_risk()
+        )
+
+        live_symbols = set()
+
+        for p in positions:
+
+            symbol = p.get(
+                "symbol"
+            )
+
+            amount = float(
+                p.get(
+                    "positionAmt",
+                    0
+                )
+            )
+
+            if abs(amount) <= 0:
+                continue
+
+            live_symbols.add(symbol)
+
+            row = db_get_open_trade(
+                symbol
+            )
+
+            if not row:
+                continue
+
+            entry = float(
+                p.get(
+                    "entryPrice",
+                    row["entry"]
+                )
+            )
+
+            mark = float(
+                p.get(
+                    "markPrice",
+                    entry
+                )
+            )
+
+            risk_per_unit = abs(
+                row["entry"]
+                - row["stop"]
+            )
+
+            if risk_per_unit <= 0:
+                continue
+
+            if row["side"] == "LONG":
+
+                r_multiple = (
+                    mark - entry
+                ) / risk_per_unit
+
+            else:
+
+                r_multiple = (
+                    entry - mark
+                ) / risk_per_unit
+
+            # Break-even protection.
+            if (
+                r_multiple
+                >= BE_TRIGGER_R
+            ):
+
+                if row["side"] == "LONG":
+
+                    new_stop = (
+                        entry
+                        * (1 + BE_LOCK_PCT)
+                    )
+
+                    new_stop = round_price(
+                        row["symbol"],
+                        new_stop,
+                        "down"
+                    )
+
+                else:
+
+                    new_stop = (
+                        entry
+                        * (1 - BE_LOCK_PCT)
+                    )
+
+                    new_stop = round_price(
+                        row["symbol"],
+                        new_stop,
+                        "up"
+                    )
+
+                replace_protection(
+                    row["symbol"],
+                    row["side"],
+                    new_stop,
+                    row["tp"]
+                )
+
+            # ATR trailing.
+            if (
+                r_multiple
+                >= TRAIL_TRIGGER_R
+            ):
+
+                raw = BINANCE.get_klines(
+                    row["symbol"],
+                    "15m",
+                    60
+                )
+
+                candles = parse_klines(
+                    raw
+                )
+
+                if len(candles) >= 30:
+
+                    highs = [
+                        x["high"]
+                        for x in candles
+                    ]
+
+                    lows = [
+                        x["low"]
+                        for x in candles
+                    ]
+
+                    closes = [
+                        x["close"]
+                        for x in candles
+                    ]
+
+                    atr_values = atr(
+                        highs,
+                        lows,
+                        closes,
+                        14
+                    )
+
+                    if atr_values:
+
+                        current_atr = (
+                            atr_values[-1]
+                        )
+
+                        if row["side"] == "LONG":
+
+                            trail = (
+                                mark
+                                - current_atr
+                                * TRAIL_ATR_MULT
+                            )
+
+                            trail = max(
+                                trail,
+                                entry
+                            )
+
+                            trail = round_price(
+                                row["symbol"],
+                                trail,
+                                "down"
+                            )
+
+                            if trail > row["stop"]:
+
+                                replace_protection(
+                                    row["symbol"],
+                                    row["side"],
+                                    trail,
+                                    row["tp"]
+                                )
+
+                        else:
+
+                            trail = (
+                                mark
+                                + current_atr
+                                * TRAIL_ATR_MULT
+                            )
+
+                            trail = min(
+                                trail,
+                                entry
+                            )
+
+                            trail = round_price(
+                                row["symbol"],
+                                trail,
+                                "up"
+                            )
+
+                            if trail < row["stop"]:
+
+                                replace_protection(
+                                    row["symbol"],
+                                    row["side"],
+                                    trail,
+                                    row["tp"]
+                                )
+
+        # If database thinks a live position exists,
+        # but Binance no longer has it, close the journal row.
+        for row in db_get_open_trades():
+
+            if row["mode"] != "LIVE":
+                continue
+
+            if row["symbol"] not in live_symbols:
+
+                # We don't invent exact exchange PnL here.
+                # Mark as closed externally.
+                db_close_trade(
+                    row["id"],
+                    row["entry"],
+                    0,
+                    "CLOSED/EXTERNAL"
+                )
+
+    except Exception as e:
+
+        logger.exception(
+            "Live position manager error: %s",
+            e
+        )
+
+
+def replace_protection(
+    symbol,
+    side,
+    stop,
+    tp
+):
+
+    try:
+
+        # Only cancel OUR protection orders.
+        orders = (
+            BINANCE.get_open_orders(
+                symbol
+            )
+        )
+
+        for order in orders:
+
+            client_id = order.get(
+                "clientOrderId",
+                ""
+            )
+
+            if client_id.startswith(
+                "SNPR_"
+            ):
+
+                try:
+                    BINANCE.cancel_order(
+                        symbol,
+                        order["orderId"]
+                    )
+                except Exception:
+                    pass
+
+        if side == "LONG":
+            order_side = "SELL"
+
+            stop = round_price(
+                symbol,
+                stop,
+                "down"
+            )
+
+            tp = round_price(
+                symbol,
+                tp,
+                "up"
+            )
+
+        else:
+            order_side = "BUY"
+
+            stop = round_price(
+                symbol,
+                stop,
+                "up"
+            )
+
+            tp = round_price(
+                symbol,
+                tp,
+                "down"
+            )
+
+        BINANCE.place_order({
+            "symbol": symbol,
+            "side": order_side,
+            "type": "STOP_MARKET",
+            "stopPrice": stop,
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+            "priceProtect": "false",
+            "newClientOrderId":
+                f"SNPR_SL_{int(time.time()*1000)}",
+        })
+
+        BINANCE.place_order({
+            "symbol": symbol,
+            "side": order_side,
+            "type": "TAKE_PROFIT_MARKET",
+            "stopPrice": tp,
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+            "priceProtect": "false",
+            "newClientOrderId":
+                f"SNPR_TP_{int(time.time()*1000)}",
+        })
+
+    except Exception as e:
+
+        logger.error(
+            "Protection replacement failed %s: %s",
+            symbol,
+            e
+        )
+
+
+# ============================================================
+# TELEGRAM ENTRY MESSAGE
+# ============================================================
+
+def entry_message(
+    signal,
+    execution
+):
+
+    mode = (
+        "🧪 PAPER"
+        if not LIVE_TRADING
+        else "🔴 LIVE"
+    )
+
+    return (
+        f"🚨 <b>NEW TRADE</b> {mode}\n\n"
+        f"<b>{signal['symbol']}</b> "
+        f"{signal['side']}\n\n"
+
+        f"Score: <b>{signal['score']:.1f}</b>\n"
+        f"1H trend: <b>{signal['trend_1h']}</b>\n"
+        f"15M trend: <b>{signal['trend_15m']}</b>\n"
+        f"RSI: <b>{signal['rsi']:.1f}</b>\n"
+        f"ADX: <b>{signal['adx']:.1f}</b>\n"
+        f"Volume: <b>{signal['volume_ratio']:.2f}x</b>\n"
+        f"Funding: <b>{signal['funding']:.5f}%</b>\n"
+        f"ATR: <b>{signal['atr_pct']*100:.2f}%</b>\n\n"
+
+        f"Entry: <code>{execution['entry']:.8g}</code>\n"
+        f"SL: <code>{execution['stop']:.8g}</code>\n"
+        f"TP: <code>{execution['tp']:.8g}</code>\n\n"
+
+        f"Qty: <code>{execution['qty']:.8g}</code>\n"
+        f"Notional: <b>{execution['notional']:.2f} USDT</b>\n"
+        f"Risk: <b>{execution['risk']:.2f} USDT</b>\n"
+    )
+
+
+# ============================================================
+# TRADING ENGINE
+# ============================================================
+
+def find_best_signal():
+
+    candidates = []
+
+    for symbol in VALID_SYMBOLS:
+
+        if STOP_EVENT.is_set():
+            break
+
+        signal = calculate_signal(
             symbol
         )
 
-        if signal:
-            candidates.append(
-                signal
-            )
+        if not signal:
+            continue
+
+        candidates.append(
+            signal
+        )
 
     if not candidates:
         return None
 
     candidates.sort(
-        key=lambda item:
-            (
-                item["score"],
-                item["adx"],
-                item["volume_ratio"],
-            ),
-        reverse=True,
+        key=lambda x: x["score"],
+        reverse=True
     )
 
     return candidates[0]
 
 
-# ============================================================
-# BOT LOOP
-# ============================================================
+def execute_signal(signal):
 
-def process_cycle():
-    global BOT_PAUSED
+    symbol = signal["symbol"]
+
+    allowed, reason = (
+        can_open_trade(symbol)
+    )
+
+    if not allowed:
+
+        logger.info(
+            "Skip %s: %s",
+            symbol,
+            reason
+        )
+
+        return None
 
     try:
-        if BOT_PAUSED:
-            return
-
-        # First manage existing
-        # positions.
-        if LIVE_TRADING:
-            manage_live_positions()
-        else:
-            manage_paper_trades()
-
-        if daily_drawdown_hit():
-            log(
-                "Daily drawdown limit "
-                "reached. New entries "
-                "blocked."
-            )
-            return
-
-        if count_open_positions() >= (
-            MAX_OPEN_POSITIONS
-        ):
-            return
-
-        if global_cooldown_active():
-            return
-
-        signal = (
-            scan_for_best_signal()
-        )
-
-        if not signal:
-            return
-
-        can_trade, reason = (
-            can_open_new_trade(
-                signal["symbol"]
-            )
-        )
-
-        if not can_trade:
-            log(
-                f"Entry blocked "
-                f"{signal['symbol']}: "
-                f"{reason}"
-            )
-            return
 
         if LIVE_TRADING:
-            live_open_trade(
-                signal
-            )
-        else:
-            paper_open_trade(
-                signal
+
+            execution = (
+                open_live_trade(
+                    signal
+                )
             )
 
-    except Exception as exc:
-        log(
-            f"Cycle error: {exc}"
+        else:
+
+            execution = (
+                paper_open_trade(
+                    signal
+                )
+            )
+
+        telegram_send(
+            entry_message(
+                signal,
+                execution
+            )
         )
+
+        return execution
+
+    except Exception as e:
+
+        logger.exception(
+            "Trade execution failed"
+        )
+
+        telegram_send(
+            f"⚠️ <b>TRADE ERROR</b>\n\n"
+            f"{symbol}\n"
+            f"<code>{str(e)[:800]}</code>"
+        )
+
+        return None
 
 
 def trading_loop():
-    log(
-        "Trading loop started."
+
+    logger.info(
+        "Trading engine started. LIVE=%s",
+        LIVE_TRADING
     )
 
-    while True:
-        started = time.time()
+    try:
+
+        BINANCE.sync_server_time()
+
+        load_exchange_symbols()
+
+        update_daily_state()
+
+    except Exception as e:
+
+        logger.exception(
+            "Startup Binance error"
+        )
+
+        telegram_send(
+            f"❌ <b>BOT START ERROR</b>\n\n"
+            f"<code>{str(e)[:1000]}</code>"
+        )
+
+    while not STOP_EVENT.is_set():
+
+        cycle_start = time.time()
 
         try:
-            process_cycle()
 
-        except Exception as exc:
-            log(
-                f"Trading loop error: "
-                f"{exc}"
+            update_daily_state()
+
+            if LIVE_TRADING:
+                manage_live_positions()
+            else:
+                manage_paper_positions()
+
+            if not BOT_PAUSED and not EMERGENCY_STOP:
+
+                if not daily_locked():
+
+                    signal = (
+                        find_best_signal()
+                    )
+
+                    if signal:
+
+                        logger.info(
+                            "Best signal: %s %s score %.1f",
+                            signal["symbol"],
+                            signal["side"],
+                            signal["score"]
+                        )
+
+                        execute_signal(
+                            signal
+                        )
+
+            elapsed = (
+                time.time()
+                - cycle_start
             )
 
-        elapsed = (
-            time.time()
-            - started
-        )
+            sleep_for = max(
+                5,
+                SCAN_INTERVAL_SECONDS
+                - int(elapsed)
+            )
 
-        sleep_for = max(
-            5,
-            SCAN_INTERVAL
-            - elapsed,
-        )
+            STOP_EVENT.wait(
+                sleep_for
+            )
 
-        time.sleep(
-            sleep_for
-        )
+        except Exception as e:
+
+            logger.exception(
+                "Main trading loop error"
+            )
+
+            telegram_send(
+                f"⚠️ <b>ENGINE ERROR</b>\n\n"
+                f"<code>{str(e)[:1000]}</code>"
+            )
+
+            STOP_EVENT.wait(15)
 
 
 # ============================================================
-# TELEGRAM
+# TELEGRAM UI
 # ============================================================
 
-TELEGRAM_APP = None
-TELEGRAM_LOOP = None
+def main_keyboard():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "📊 Status",
+                callback_data="status"
+            ),
+            InlineKeyboardButton(
+                "📈 Positions",
+                callback_data="positions"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔎 Signals",
+                callback_data="signals"
+            ),
+            InlineKeyboardButton(
+                "📋 Stats",
+                callback_data="stats"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "▶️ Resume",
+                callback_data="resume"
+            ),
+            InlineKeyboardButton(
+                "⏸ Pause",
+                callback_data="pause"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🛑 Emergency",
+                callback_data="emergency"
+            ),
+            InlineKeyboardButton(
+                "💥 Close All",
+                callback_data="close_confirm"
+            ),
+        ],
+    ])
 
 
-def telegram_send(
-    text,
-):
-    global TELEGRAM_APP
-    global TELEGRAM_LOOP
+def status_text():
 
-    if not TELEGRAM_BOT_TOKEN:
-        return
-
-    if not TELEGRAM_CHAT_ID:
-        return
-
-    if (
-        TELEGRAM_APP is None
-        or TELEGRAM_LOOP is None
-    ):
-        log(
-            "Telegram message "
-            "skipped: app not ready"
-        )
-        return
-
-    try:
-        future = (
-            asyncio.run_coroutine_threadsafe(
-                TELEGRAM_APP.bot.send_message(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    text=text,
-                ),
-                TELEGRAM_LOOP,
-            )
-        )
-
-        future.result(
-            timeout=15
-        )
-
-    except Exception as exc:
-        log(
-            f"Telegram send error: "
-            f"{exc}"
-        )
-
-
-def authorized(
-    update,
-):
-    if not update:
-        return False
-
-    user = update.effective_user
-    chat = update.effective_chat
-
-    if not user or not chat:
-        return False
-
-    return str(
-        chat.id
-    ) == str(
-        TELEGRAM_CHAT_ID
-    )
-
-
-def bot_status_text():
     mode = (
-        "LIVE"
-        if LIVE_TRADING
-        else "PAPER"
+        "🧪 PAPER"
+        if not LIVE_TRADING
+        else "🔴 LIVE"
     )
 
-    equity = (
-        get_account_equity()
+    state = (
+        "⏸ PAUSED"
+        if BOT_PAUSED
+        else "▶️ RUNNING"
     )
 
-    open_count = (
-        count_open_positions()
+    emergency = (
+        "🚨 YES"
+        if EMERGENCY_STOP
+        else "NO"
     )
 
-    drawdown_hit = (
-        daily_drawdown_hit()
-    )
-
-    margin = (
-        current_margin_used()
-    )
-
-    return (
-        "🤖 SNIPER BOT\n"
-        "\n"
-        f"Mode: {mode}\n"
-        f"Equity: {equity:.2f} USDT\n"
-        f"Positions: "
-        f"{open_count}/"
-        f"{MAX_OPEN_POSITIONS}\n"
-        f"Margin used: "
-        f"{margin:.2f} USDT\n"
-        f"Paused: "
-        f"{'YES' if BOT_PAUSED else 'NO'}\n"
-        f"Daily DD lock: "
-        f"{'YES' if drawdown_hit else 'NO'}\n"
-        f"Leverage: {LEVERAGE}x\n"
-        f"Risk/trade: "
-        f"{RISK_PER_TRADE * 100:.2f}%"
-    )
-
-
-def positions_text():
-    if not LIVE_TRADING:
-        trades = (
-            get_open_trades()
-        )
-
-        if not trades:
-            return (
-                "📊 No open paper "
-                "positions."
-            )
-
-        lines = [
-            "📊 PAPER POSITIONS"
-        ]
-
-        for trade in trades:
-            symbol = trade[
-                "symbol"
-            ]
-
-            entry = safe_float(
-                trade["entry"]
-            )
-
-            stop = safe_float(
-                trade["stop"]
-            )
-
-            target = safe_float(
-                trade["target"]
-            )
-
-            side = trade[
-                "side"
-            ]
-
-            price = (
-                get_ticker_price(
-                    symbol
-                )
-            )
-
-            r = (
-                calculate_r_multiple(
-                    side,
-                    entry,
-                    stop,
-                    price,
-                )
-            )
-
-            lines.append(
-                ""
-                f"{symbol} "
-                f"{side}\n"
-                f"Entry: "
-                f"{entry:.6f}\n"
-                f"Price: "
-                f"{price:.6f}\n"
-                f"SL: "
-                f"{stop:.6f}\n"
-                f"TP: "
-                f"{target:.6f}\n"
-                f"R: {r:.2f}"
-            )
-
-        return "\n".join(
-            lines
-        )
-
-    positions = (
-        get_open_live_positions()
-    )
-
-    if not positions:
-        return (
-            "📊 No open live "
-            "positions."
-        )
-
-    lines = [
-        "📊 LIVE POSITIONS"
-    ]
-
-    for position in positions:
-        symbol = position.get(
-            "symbol"
-        )
-
-        side = get_position_side(
-            position
-        )
-
-        amount = abs(
-            safe_float(
-                position.get(
-                    "positionAmt"
-                )
-            )
-        )
-
-        entry = safe_float(
-            position.get(
-                "entryPrice"
-            )
-        )
-
-        mark = safe_float(
-            position.get(
-                "markPrice"
-            )
-        )
-
-        pnl = safe_float(
-            position.get(
-                "unRealizedProfit"
-            )
-        )
-
-        lines.append(
-            ""
-            f"{symbol} "
-            f"{side}\n"
-            f"Qty: {amount}\n"
-            f"Entry: {entry:.6f}\n"
-            f"Mark: {mark:.6f}\n"
-            f"uPnL: "
-            f"{pnl:+.2f} USDT"
-        )
-
-    return "\n".join(
-        lines
-    )
-
-
-def stats_text():
-    trades = (
-        get_recent_trades(
-            1000
-        )
-    )
-
-    closed = [
-        trade
-        for trade in trades
-        if trade["status"]
-        == "CLOSED"
-    ]
-
-    if not closed:
-        return (
-            "📈 No closed trades yet."
-        )
-
-    wins = [
-        trade
-        for trade in closed
-        if safe_float(
-            trade["pnl"]
-        ) > 0
-    ]
-
-    losses = [
-        trade
-        for trade in closed
-        if safe_float(
-            trade["pnl"]
-        ) < 0
-    ]
-
-    pnl = sum(
-        safe_float(
-            trade["pnl"]
-        )
-        for trade in closed
-    )
-
-    avg_r = (
-        average(
-            [
-                safe_float(
-                    trade[
-                        "r_multiple"
-                    ]
-                )
-                for trade in closed
-            ]
-        )
-    )
-
-    win_rate = (
-        len(wins)
-        / len(closed)
-        * 100
-    )
-
-    return (
-        "📈 STATS\n"
-        "\n"
-        f"Trades: "
-        f"{len(closed)}\n"
-        f"Wins: "
-        f"{len(wins)}\n"
-        f"Losses: "
-        f"{len(losses)}\n"
-        f"Win rate: "
-        f"{win_rate:.1f}%\n"
-        f"Net PnL: "
-        f"{pnl:+.2f} USDT\n"
-        f"Average R: "
-        f"{avg_r:+.2f}"
-    )
-
-
-def signals_text():
-    symbols = (
-        available_symbols()
-    )
-
-    if not symbols:
-        return (
-            "No symbols available."
-        )
-
-    candidates = []
-
-    for symbol in symbols:
-        if (
-            symbol_cooldown_active(
-                symbol
-            )
-        ):
-            continue
-
-        signal = build_signal(
-            symbol
-        )
-
-        if signal:
-            candidates.append(
-                signal
-            )
-
-    candidates.sort(
-        key=lambda item:
-            (
-                item["score"],
-                item["adx"],
-            ),
-        reverse=True,
-    )
-
-    if not candidates:
-        return (
-            "🔎 No valid signals."
-        )
-
-    lines = [
-        "🔎 TOP SIGNALS"
-    ]
-
-    for signal in candidates[:8]:
-        lines.append(
-            ""
-            f"{signal['symbol']} "
-            f"{signal['direction']}\n"
-            f"Score: "
-            f"{signal['score']}\n"
-            f"RSI: "
-            f"{signal['rsi']:.1f}\n"
-            f"ADX: "
-            f"{signal['adx']:.1f}\n"
-            f"ATR: "
-            f"{signal['atr_pct'] * 100:.2f}%\n"
-            f"Volume: "
-            f"{signal['volume_ratio']:.2f}x\n"
-            f"Funding: "
-            f"{signal['funding_pct']:.4f}%"
-        )
-
-    return "\n".join(
-        lines
-    )
-
-
-def health_text():
     try:
-        get_exchange_info()
+        equity = get_equity()
 
-        exchange_ok = True
-
-    except Exception as exc:
-        exchange_ok = False
-
-        log(
-            f"Health exchange "
-            f"error: {exc}"
+        margin = (
+            current_margin_used()
         )
 
-    telegram_ok = (
-        bool(
-            TELEGRAM_BOT_TOKEN
-        )
-        and bool(
-            TELEGRAM_CHAT_ID
-        )
-    )
+        locked = daily_locked()
 
-    return (
-        "🩺 HEALTH\n"
-        "\n"
-        f"Exchange: "
-        f"{'OK' if exchange_ok else 'ERROR'}\n"
-        f"Telegram config: "
-        f"{'OK' if telegram_ok else 'ERROR'}\n"
-        f"Mode: "
-        f"{'LIVE' if LIVE_TRADING else 'PAPER'}\n"
-        f"Paused: "
-        f"{'YES' if BOT_PAUSED else 'NO'}"
-
-    # ============================================================
-# TELEGRAM BUTTONS
-# ============================================================
-
-async def telegram_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query is None:
-        return
-
-    user = update.effective_user
-    if user is None or not is_authorized_chat(update):
-        await query.answer("Access denied.", show_alert=True)
-        return
-
-    await query.answer()
-
-    data = query.data or ""
-
-    if data == "status":
-        await query.edit_message_text(
-            status_text(),
-            reply_markup=telegram_keyboard()
+        return (
+            f"🤖 <b>BOT STATUS</b>\n\n"
+            f"Mode: <b>{mode}</b>\n"
+            f"Engine: <b>{state}</b>\n"
+            f"Emergency: <b>{emergency}</b>\n\n"
+            f"Equity: <b>{equity:.2f} USDT</b>\n"
+            f"Margin used: <b>{margin:.2f} USDT</b>\n"
+            f"Daily lock: "
+            f"<b>{'YES' if locked else 'NO'}</b>\n\n"
+            f"Leverage: <b>{LEVERAGE}x</b>\n"
+            f"Risk/trade: "
+            f"<b>{RISK_PER_TRADE*100:.2f}%</b>\n"
+            f"Max positions: "
+            f"<b>{MAX_OPEN_POSITIONS}</b>\n"
         )
 
-    elif data == "positions":
-        await query.edit_message_text(
-            positions_text(),
-            reply_markup=telegram_keyboard()
-        )
+    except Exception as e:
 
-    elif data == "stats":
-        await query.edit_message_text(
-            stats_text(),
-            reply_markup=telegram_keyboard()
-        )
-
-    elif data == "signals":
-        text = signals_text()
-        await query.edit_message_text(
-            text,
-            reply_markup=telegram_keyboard()
-        )
-
-    elif data == "pause":
-        global BOT_PAUSED
-        BOT_PAUSED = True
-        save_state("bot_paused", "1")
-
-        await query.edit_message_text(
-            "⏸ BOT PAUSED\n\nNew entries are disabled.",
-            reply_markup=telegram_keyboard()
-        )
-
-    elif data == "resume":
-        global BOT_PAUSED
-        BOT_PAUSED = False
-        save_state("bot_paused", "0")
-
-        await query.edit_message_text(
-            "▶️ BOT RESUMED\n\nNew entries are enabled.",
-            reply_markup=telegram_keyboard()
-        )
-
-    elif data == "emergency":
-        global BOT_PAUSED
-        BOT_PAUSED = True
-        save_state("bot_paused", "1")
-
-        await query.edit_message_text(
-            "🚨 EMERGENCY STOP\n\n"
-            "New entries disabled.\n"
-            "Existing positions were NOT closed.",
-            reply_markup=telegram_keyboard()
-        )
-
-    elif data == "close_confirm":
-        await query.edit_message_text(
-            "⚠️ CLOSE ALL POSITIONS?\n\n"
-            "This will close all bot-managed positions.",
-            reply_markup=close_confirm_keyboard()
-        )
-
-    elif data == "close_cancel":
-        await query.edit_message_text(
-            status_text(),
-            reply_markup=telegram_keyboard()
-        )
-
-    elif data == "close_all":
-        result = close_all_bot_positions()
-
-        await query.edit_message_text(
-            result,
-            reply_markup=telegram_keyboard()
+        return (
+            f"🤖 <b>BOT STATUS</b>\n\n"
+            f"Mode: <b>{mode}</b>\n"
+            f"Engine: <b>{state}</b>\n"
+            f"⚠️ Binance error:\n"
+            f"<code>{str(e)[:600]}</code>"
         )
 
 
-# ============================================================
-# TELEGRAM KEYBOARD
-# ============================================================
+async def start_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-def telegram_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📊 Status", callback_data="status"),
-            InlineKeyboardButton("📈 Positions", callback_data="positions"),
-        ],
-        [
-            InlineKeyboardButton("📡 Signals", callback_data="signals"),
-            InlineKeyboardButton("💰 Stats", callback_data="stats"),
-        ],
-        [
-            InlineKeyboardButton("⏸ Pause", callback_data="pause"),
-            InlineKeyboardButton("▶️ Resume", callback_data="resume"),
-        ],
-        [
-            InlineKeyboardButton("🚨 Emergency", callback_data="emergency"),
-        ],
-        [
-            InlineKeyboardButton("🔴 Close All", callback_data="close_confirm"),
-        ],
-    ])
-
-
-def close_confirm_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "⚠️ YES, CLOSE ALL",
-                callback_data="close_all"
-            ),
-            InlineKeyboardButton(
-                "❌ CANCEL",
-                callback_data="close_cancel"
-            ),
-        ]
-    ])
-
-
-# ============================================================
-# TELEGRAM COMMANDS
-# ============================================================
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized_chat(update):
-        return
-
-    text = (
-        "🤖 BINANCE SNIPER BOT\n\n"
-        "Bot is online.\n\n"
-        f"Mode: {'LIVE' if LIVE_TRADING else 'PAPER'}\n"
-        f"Leverage: {LEVERAGE}x\n"
-        f"Risk/trade: {RISK_PER_TRADE * 100:.2f}%\n"
-        f"Max positions: {MAX_OPEN_POSITIONS}\n\n"
-        "Use the buttons below or commands:\n"
-        "/status\n"
-        "/positions\n"
-        "/stats\n"
-        "/signals\n"
-        "/pause\n"
-        "/resume\n"
-        "/mode\n"
-        "/risk\n"
-        "/health"
-    )
-
-    await update.message.reply_text(
-        text,
-        reply_markup=telegram_keyboard()
-    )
-
-
-async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized_chat(update):
+    if not authorized(update):
+        await deny(update)
         return
 
     await update.message.reply_text(
         status_text(),
-        reply_markup=telegram_keyboard()
+        parse_mode=ParseMode.HTML,
+        reply_markup=main_keyboard()
     )
 
 
-async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized_chat(update):
+async def status_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        await deny(update)
         return
 
     await update.message.reply_text(
-        positions_text(),
-        reply_markup=telegram_keyboard()
+        status_text(),
+        parse_mode=ParseMode.HTML,
+        reply_markup=main_keyboard()
     )
 
 
-async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized_chat(update):
+async def positions_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        await deny(update)
+        return
+
+    rows = db_get_open_trades()
+
+    if not rows:
+
+        await update.message.reply_text(
+            "📭 No open bot positions."
+        )
+
+        return
+
+    lines = [
+        "📈 <b>OPEN POSITIONS</b>\n"
+    ]
+
+    for row in rows:
+
+        lines.append(
+            f"<b>{row['symbol']}</b> "
+            f"{row['side']}\n"
+            f"Entry: "
+            f"<code>{row['entry']:.8g}</code>\n"
+            f"SL: "
+            f"<code>{row['stop']:.8g}</code>\n"
+            f"TP: "
+            f"<code>{row['tp']:.8g}</code>\n"
+            f"Qty: "
+            f"<code>{row['qty']:.8g}</code>\n"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def stats_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        await deny(update)
+        return
+
+    stats = db_stats()
+
+    await update.message.reply_text(
+        f"📋 <b>BOT STATS</b>\n\n"
+        f"Trades: <b>{stats['total']}</b>\n"
+        f"Wins: <b>{stats['wins']}</b>\n"
+        f"Losses: <b>{stats['losses']}</b>\n"
+        f"Win rate: <b>{stats['win_rate']:.1f}%</b>\n\n"
+        f"Net PnL: "
+        f"<b>{stats['pnl']:+.2f} USDT</b>\n"
+        f"Average win: "
+        f"<b>{stats['avg_win']:+.2f}</b>\n"
+        f"Average loss: "
+        f"<b>{stats['avg_loss']:+.2f}</b>",
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def signals_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        await deny(update)
         return
 
     await update.message.reply_text(
-        stats_text(),
-        reply_markup=telegram_keyboard()
+        "🔎 Scanning market..."
     )
 
+    candidates = []
 
-async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized_chat(update):
+    for symbol in VALID_SYMBOLS:
+
+        try:
+
+            signal = calculate_signal(
+                symbol
+            )
+
+            if signal:
+                candidates.append(
+                    signal
+                )
+
+        except Exception:
+            continue
+
+    candidates.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    if not candidates:
+
+        await update.message.reply_text(
+            "No valid high-score signals right now."
+        )
+
         return
 
+    lines = [
+        "🔎 <b>TOP SIGNALS</b>\n"
+    ]
+
+    for signal in candidates[:7]:
+
+        lines.append(
+            f"{signal['symbol']} "
+            f"<b>{signal['side']}</b> "
+            f"score "
+            f"<b>{signal['score']:.1f}</b>\n"
+            f"RSI {signal['rsi']:.1f} | "
+            f"ADX {signal['adx']:.1f} | "
+            f"Vol {signal['volume_ratio']:.2f}x\n"
+        )
+
     await update.message.reply_text(
-        signals_text(),
-        reply_markup=telegram_keyboard()
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML
     )
 
 
-async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def pause_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     global BOT_PAUSED
 
-    if not is_authorized_chat(update):
+    if not authorized(update):
+        await deny(update)
         return
 
     BOT_PAUSED = True
-    save_state("bot_paused", "1")
+
+    set_state(
+        "bot_paused",
+        "1"
+    )
 
     await update.message.reply_text(
-        "⏸ BOT PAUSED\n\nNew entries are disabled.",
-        reply_markup=telegram_keyboard()
+        "⏸ <b>BOT PAUSED</b>\n\n"
+        "No new trades will be opened.",
+        parse_mode=ParseMode.HTML
     )
 
 
-async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global BOT_PAUSED
+async def resume_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    if not is_authorized_chat(update):
+    global BOT_PAUSED
+    global EMERGENCY_STOP
+
+    if not authorized(update):
+        await deny(update)
         return
 
     BOT_PAUSED = False
-    save_state("bot_paused", "0")
+    EMERGENCY_STOP = False
+
+    set_state(
+        "bot_paused",
+        "0"
+    )
+
+    set_state(
+        "emergency_stop",
+        "0"
+    )
 
     await update.message.reply_text(
-        "▶️ BOT RESUMED\n\nNew entries are enabled.",
-        reply_markup=telegram_keyboard()
+        "▶️ <b>BOT RESUMED</b>",
+        parse_mode=ParseMode.HTML
     )
 
 
-async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized_chat(update):
+async def mode_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        await deny(update)
         return
 
-    mode = "LIVE TRADING" if LIVE_TRADING else "PAPER MODE"
+    mode = (
+        "🧪 PAPER"
+        if not LIVE_TRADING
+        else "🔴 LIVE"
+    )
 
     await update.message.reply_text(
-        f"⚙️ CURRENT MODE\n\n{mode}\n\n"
-        f"Leverage: {LEVERAGE}x\n"
-        f"Risk/trade: {RISK_PER_TRADE * 100:.2f}%\n"
-        f"Max positions: {MAX_OPEN_POSITIONS}",
-        reply_markup=telegram_keyboard()
+        f"Current mode: <b>{mode}</b>\n\n"
+        f"LIVE_TRADING = "
+        f"<code>{str(LIVE_TRADING).lower()}</code>",
+        parse_mode=ParseMode.HTML
     )
 
 
-async def cmd_risk(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized_chat(update):
+async def risk_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        await deny(update)
         return
 
     await update.message.reply_text(
-        "🛡 RISK SETTINGS\n\n"
-        f"Risk per trade: {RISK_PER_TRADE * 100:.2f}%\n"
-        f"Max margin/trade: {MAX_MARGIN_PER_TRADE * 100:.1f}%\n"
-        f"Max total margin: {MAX_TOTAL_MARGIN * 100:.1f}%\n"
-        f"Max daily drawdown: {MAX_DAILY_DRAWDOWN * 100:.1f}%\n"
-        f"Cooldown: {COOLDOWN_MINUTES} min\n"
-        f"Global cooldown: {GLOBAL_ENTRY_COOLDOWN_MINUTES} min\n"
-        f"Max positions: {MAX_OPEN_POSITIONS}",
-        reply_markup=telegram_keyboard()
+        f"⚙️ <b>RISK SETTINGS</b>\n\n"
+        f"Risk/trade: "
+        f"<b>{RISK_PER_TRADE*100:.2f}%</b>\n"
+        f"Max margin/trade: "
+        f"<b>{MAX_MARGIN_PER_TRADE*100:.1f}%</b>\n"
+        f"Max total margin: "
+        f"<b>{MAX_TOTAL_MARGIN*100:.1f}%</b>\n"
+        f"Max positions: "
+        f"<b>{MAX_OPEN_POSITIONS}</b>\n"
+        f"Leverage: "
+        f"<b>{LEVERAGE}x</b>\n"
+        f"Daily DD lock: "
+        f"<b>{MAX_DAILY_DRAWDOWN*100:.1f}%</b>",
+        parse_mode=ParseMode.HTML
     )
 
 
-async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized_chat(update):
+async def health_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not authorized(update):
+        await deny(update)
         return
 
     try:
-        ping_binance()
+
+        BINANCE.get_price(
+            "BTCUSDT"
+        )
 
         await update.message.reply_text(
-            "🟢 SYSTEM HEALTH\n\n"
-            "Binance API: OK\n"
-            "Telegram: OK\n"
-            "Database: OK\n"
-            f"Mode: {'LIVE' if LIVE_TRADING else 'PAPER'}\n"
-            f"Paused: {'YES' if BOT_PAUSED else 'NO'}",
-            reply_markup=telegram_keyboard()
+            "🟢 <b>HEALTHY</b>\n\n"
+            "Telegram: connected\n"
+            "Binance API: connected\n"
+            "Trading engine: running",
+            parse_mode=ParseMode.HTML
         )
 
     except Exception as e:
+
         await update.message.reply_text(
-            f"🔴 SYSTEM HEALTH\n\n"
-            f"Binance API ERROR:\n{e}",
-            reply_markup=telegram_keyboard()
+            f"🔴 <b>HEALTH ERROR</b>\n\n"
+            f"<code>{str(e)[:800]}</code>",
+            parse_mode=ParseMode.HTML
         )
 
 
-# ============================================================
-# TELEGRAM APPLICATION
-# ============================================================
+async def callback_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-def build_telegram_app():
-    if not TELEGRAM_BOT_TOKEN:
-        log.warning("TELEGRAM_BOT_TOKEN is not configured.")
-        return None
+    global BOT_PAUSED
+    global EMERGENCY_STOP
 
-    application = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .build()
-    )
+    query = update.callback_query
 
-    application.add_handler(
-        CallbackQueryHandler(
-            telegram_buttons
+    if str(
+        query.message.chat_id
+    ) != ALLOWED_CHAT_ID:
+
+        await query.answer(
+            "Access denied",
+            show_alert=True
         )
-    )
 
-    application.add_handler(
-        CommandHandler(
-            "start",
-            cmd_start
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "status",
-            cmd_status
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "positions",
-            cmd_positions
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "stats",
-            cmd_stats
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "signals",
-            cmd_signals
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "pause",
-            cmd_pause
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "resume",
-            cmd_resume
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "mode",
-            cmd_mode
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "risk",
-            cmd_risk
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "health",
-            cmd_health
-        )
-    )
-
-    return application
-
-
-# ============================================================
-# TELEGRAM MAIN
-# ============================================================
-
-async def telegram_main():
-    application = build_telegram_app()
-
-    if application is None:
-        log.warning(
-            "Telegram disabled because TELEGRAM_BOT_TOKEN is missing."
-        )
         return
 
-    await application.initialize()
-    await application.start()
+    await query.answer()
 
-    if application.updater is not None:
-        await application.updater.start_polling()
+    action = query.data
 
-    log.info("Telegram bot started.")
+    if action == "status":
+
+        await query.edit_message_text(
+            status_text(),
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+    elif action == "positions":
+
+        rows = db_get_open_trades()
+
+        if not rows:
+            text = "📭 No open bot positions."
+
+        else:
+
+            parts = [
+                "📈 <b>OPEN POSITIONS</b>\n"
+            ]
+
+            for row in rows:
+
+                parts.append(
+                    f"<b>{row['symbol']}</b> "
+                    f"{row['side']}\n"
+                    f"Entry: "
+                    f"<code>{row['entry']:.8g}</code>\n"
+                    f"SL: "
+                    f"<code>{row['stop']:.8g}</code>\n"
+                    f"TP: "
+                    f"<code>{row['tp']:.8g}</code>\n"
+                )
+
+            text = "\n".join(parts)
+
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+    elif action == "stats":
+
+        stats = db_stats()
+
+        await query.edit_message_text(
+            f"📋 <b>STATS</b>\n\n"
+            f"Trades: {stats['total']}\n"
+            f"Wins: {stats['wins']}\n"
+            f"Losses: {stats['losses']}\n"
+            f"Win rate: "
+            f"{stats['win_rate']:.1f}%\n"
+            f"PnL: "
+            f"<b>{stats['pnl']:+.2f} USDT</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+    elif action == "signals":
+
+        await query.edit_message_text(
+            "🔎 Scanning...",
+            parse_mode=ParseMode.HTML
+        )
+
+        candidates = []
+
+        for symbol in VALID_SYMBOLS:
+
+            try:
+
+                signal = calculate_signal(
+                    symbol
+                )
+
+                if signal:
+                    candidates.append(
+                        signal
+                    )
+
+            except Exception:
+                continue
+
+        candidates.sort(
+            key=lambda x: x["score"],
+            reverse=True
+        )
+
+        if not candidates:
+
+            text = (
+                "🔎 No high-score signals."
+            )
+
+        else:
+
+            lines = [
+                "🔎 <b>TOP SIGNALS</b>\n"
+            ]
+
+            for signal in candidates[:7]:
+
+                lines.append(
+                    f"{signal['symbol']} "
+                    f"<b>{signal['side']}</b> "
+                    f"{signal['score']:.1f}/10+\n"
+                    f"RSI {signal['rsi']:.1f} | "
+                    f"ADX {signal['adx']:.1f} | "
+                    f"Vol {signal['volume_ratio']:.2f}x\n"
+                )
+
+            text = "\n".join(lines)
+
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+    elif action == "pause":
+
+        BOT_PAUSED = True
+
+        set_state(
+            "bot_paused",
+            "1"
+        )
+
+        await query.edit_message_text(
+            "⏸ <b>BOT PAUSED</b>\n\n"
+            "No new trades will be opened.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+    elif action == "resume":
+
+        BOT_PAUSED = False
+        EMERGENCY_STOP = False
+
+        set_state(
+            "bot_paused",
+            "0"
+        )
+
+        set_state(
+            "emergency_stop",
+            "0"
+        )
+
+        await query.edit_message_text(
+            "▶️ <b>BOT RESUMED</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+    elif action == "emergency":
+
+        EMERGENCY_STOP = True
+        BOT_PAUSED = True
+
+        set_state(
+            "emergency_stop",
+            "1"
+        )
+
+        set_state(
+            "bot_paused",
+            "1"
+        )
+
+        await query.edit_message_text(
+            "🚨 <b>EMERGENCY STOP ACTIVE</b>\n\n"
+            "New trades are disabled.\n\n"
+            "Existing positions are NOT automatically "
+            "closed by this button.\n\n"
+            "Use CLOSE ALL if you want to close positions.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+    elif action == "close_confirm":
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "❌ YES, CLOSE ALL",
+                    callback_data="close_execute"
+                ),
+                InlineKeyboardButton(
+                    "↩️ Cancel",
+                    callback_data="cancel"
+                ),
+            ]
+        ])
+
+        await query.edit_message_text(
+            "⚠️ <b>ARE YOU SURE?</b>\n\n"
+            "This will close all bot positions.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard
+        )
+
+    elif action == "close_execute":
+
+        await close_all_bot_positions()
+
+        await query.edit_message_text(
+            "💥 <b>CLOSE ALL EXECUTED</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+    elif action == "cancel":
+
+        await query.edit_message_text(
+            status_text(),
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard()
+        )
+
+
+async def close_all_bot_positions():
+
+    global BOT_PAUSED
+
+    BOT_PAUSED = True
+
+    rows = db_get_open_trades()
+
+    if not rows:
+        return
+
+    if not LIVE_TRADING:
+
+        for row in rows:
+
+            try:
+
+                price = BINANCE.get_price(
+                    row["symbol"]
+                )
+
+                close_paper_trade(
+                    row,
+                    price,
+                    "MANUAL CLOSE ALL"
+                )
+
+            except Exception as e:
+
+                logger.error(
+                    "Paper close error: %s",
+                    e
+                )
+
+        return
+
+    # LIVE
+    for row in rows:
+
+        try:
+
+            amount = (
+                get_position_amount(
+                    row["symbol"]
+                )
+            )
+
+            if abs(amount) <= 0:
+                continue
+
+            close_side = (
+                "SELL"
+                if amount > 0
+                else "BUY"
+            )
+
+            BINANCE.place_order({
+                "symbol": row["symbol"],
+                "side": close_side,
+                "type": "MARKET",
+                "quantity": abs(amount),
+                "reduceOnly": "true",
+                "newOrderRespType": "RESULT",
+            })
+
+            try:
+                BINANCE.cancel_all_orders(
+                    row["symbol"]
+                )
+            except Exception:
+                pass
+
+            db_close_trade(
+                row["id"],
+                row["entry"],
+                0,
+                "MANUAL CLOSE ALL"
+            )
+
+        except Exception as e:
+
+            logger.error(
+                "Live close error %s: %s",
+                row["symbol"],
+                e
+            )
+
+
+# ============================================================
+# TELEGRAM JOBS
+# ============================================================
+
+async def heartbeat_job(
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     try:
-        while True:
-            await asyncio.sleep(3600)
 
-    finally:
-        if application.updater is not None:
-            await application.updater.stop()
+        locked = daily_locked()
 
-        await application.stop()
-        await application.shutdown()
+        if locked:
+
+            previous = get_state(
+                "daily_lock_notified",
+                "0"
+            )
+
+            if previous != get_day_key():
+
+                telegram_send(
+                    "🛑 <b>DAILY RISK LOCK</b>\n\n"
+                    f"Daily drawdown reached "
+                    f"{MAX_DAILY_DRAWDOWN*100:.1f}%\n"
+                    "New trades are disabled for today."
+                )
+
+                set_state(
+                    "daily_lock_notified",
+                    get_day_key()
+                )
+
+    except Exception as e:
+
+        logger.error(
+            "Heartbeat error: %s",
+            e
+        )
+
+
+# ============================================================
+# ERROR HANDLER
+# ============================================================
+
+async def telegram_error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    logger.exception(
+        "Telegram error",
+        exc_info=context.error
+    )
 
 
 # ============================================================
 # STARTUP
 # ============================================================
 
-def startup_checks():
-    log.info("==========================================")
-    log.info("BINANCE SNIPER BOT STARTING")
-    log.info("==========================================")
+async def post_init(
+    application: Application
+):
 
-    log.info(
-        "Mode: %s",
-        "LIVE TRADING" if LIVE_TRADING else "PAPER MODE"
+    global TELEGRAM_LOOP
+    global TELEGRAM_APP
+    global TRADING_THREAD
+    global BOT_PAUSED
+    global EMERGENCY_STOP
+
+    TELEGRAM_LOOP = asyncio.get_running_loop()
+    TELEGRAM_APP = application
+
+    BOT_PAUSED = (
+        get_state(
+            "bot_paused",
+            "0"
+        ) == "1"
     )
 
-    log.info("Leverage: %sx", LEVERAGE)
-    log.info("Risk per trade: %.2f%%", RISK_PER_TRADE * 100)
-    log.info("Max positions: %s", MAX_OPEN_POSITIONS)
+    EMERGENCY_STOP = (
+        get_state(
+            "emergency_stop",
+            "0"
+        ) == "1"
+    )
 
-    init_db()
+    TRADING_THREAD = threading.Thread(
+        target=trading_loop,
+        daemon=True
+    )
 
-    if LIVE_TRADING:
-        if not BINANCE_API_KEY or not BINANCE_SECRET_KEY:
-            raise RuntimeError(
-                "LIVE_TRADING=true but Binance API keys are missing."
-            )
+    TRADING_THREAD.start()
 
-        ping_binance()
+    application.job_queue.run_repeating(
+        heartbeat_job,
+        interval=300,
+        first=30,
+        name="heartbeat"
+    )
 
-        log.info("Binance API connection: OK")
+    telegram_send(
+        "🟢 <b>BOT ONLINE</b>\n\n"
+        f"Mode: "
+        f"<b>{'LIVE' if LIVE_TRADING else 'PAPER'}</b>\n"
+        f"Leverage: <b>{LEVERAGE}x</b>\n"
+        f"Risk/trade: "
+        f"<b>{RISK_PER_TRADE*100:.2f}%</b>\n\n"
+        "Use /start to open the control panel."
+    )
 
-    else:
-        log.info(
-            "Paper equity: $%.2f",
-            get_paper_equity()
-        )
 
-    if TELEGRAM_BOT_TOKEN:
-        log.info("Telegram: configured")
-    else:
-        log.warning("Telegram: NOT configured")
+async def post_shutdown(
+    application: Application
+):
 
-    log.info("Startup checks complete.")
+    STOP_EVENT.set()
+
+    telegram_send(
+        "🔴 <b>BOT SHUTDOWN</b>"
+    )
 
 
 # ============================================================
@@ -5456,24 +3929,131 @@ def startup_checks():
 # ============================================================
 
 def main():
-    startup_checks()
 
-    trading_thread = threading.Thread(
-        target=bot_loop,
-        name="TradingThread",
-        daemon=True
-    )
-
-    trading_thread.start()
-
-    if TELEGRAM_BOT_TOKEN:
-        asyncio.run(
-            telegram_main()
+    if not BINANCE_API_KEY:
+        raise RuntimeError(
+            "BINANCE_API_KEY is missing"
         )
 
-    else:
-        while True:
-            time.sleep(60)
+    if not BINANCE_SECRET_KEY:
+        raise RuntimeError(
+            "BINANCE_SECRET_KEY is missing"
+        )
+
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN is missing"
+        )
+
+    if not TELEGRAM_CHAT_ID:
+        raise RuntimeError(
+            "TELEGRAM_CHAT_ID is missing"
+        )
+
+    init_db()
+
+    application = (
+        Application.builder()
+        .token(
+            TELEGRAM_BOT_TOKEN
+        )
+        .post_init(
+            post_init
+        )
+        .post_shutdown(
+            post_shutdown
+        )
+        .build()
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "start",
+            start_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "status",
+            status_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "positions",
+            positions_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "stats",
+            stats_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "signals",
+            signals_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "pause",
+            pause_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "resume",
+            resume_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "mode",
+            mode_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "risk",
+            risk_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "health",
+            health_command
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            callback_handler
+        )
+    )
+
+    application.add_error_handler(
+        telegram_error_handler
+    )
+
+    logger.info(
+        "Starting Telegram polling..."
+    )
+
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":
