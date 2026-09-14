@@ -1,6 +1,2 @@
-flask
-gunicorn
-python-binance
-pandas
-numpy
-requests
+requests>=2.32,<3
+python-telegram-bot[job-queue]>=22.7,<23
