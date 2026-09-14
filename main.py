@@ -2121,30 +2121,30 @@ def open_live_trade(signal):
 
     try:
 
-        BINANCE.place_order({
-            "symbol": symbol,
-            "side": sl_side,
-            "type": "STOP_MARKET",
-            "stopPrice": stop,
-            "closePosition": "true",
-            "workingType": "MARK_PRICE",
-            "priceProtect": "false",
-            "newClientOrderId":
-                f"SNPR_SL_{int(time.time()*1000)}",
-        })
+        BINANCE.place_algo_order({
+    "symbol": symbol,
+    "side": sl_side,
+    "type": "STOP_MARKET",
+    "triggerPrice": stop,
+    "closePosition": "true",
+    "workingType": "MARK_PRICE",
+    "priceProtect": "false",
+    "clientAlgoId":
+        f"SNPR_SL_{int(time.time()*1000)}",
+})
 
-        BINANCE.place_order({
-            "symbol": symbol,
-            "side": sl_side,
-            "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": tp,
-            "closePosition": "true",
-            "workingType": "MARK_PRICE",
-            "priceProtect": "false",
-            "newClientOrderId":
-                f"SNPR_TP_{int(time.time()*1000)}",
-        })
-
+    BINANCE.place_algo_order({
+    "symbol": symbol,
+    "side": order_side,
+    "type": "STOP_MARKET",
+    "triggerPrice": stop,
+    "closePosition": "true",
+    "workingType": "MARK_PRICE",
+    "priceProtect": "false",
+    "clientAlgoId":
+        f"SNPR_SL_{int(time.time()*1000)}",
+})
+    
     except Exception:
 
         logger.exception(
