@@ -17,21 +17,18 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', 'ТВОЙ_CHAT_ID')
 
 BASE_URL = "https://fapi.binance.com"
 
-# ==================== РИСК-МЕНЕДЖМЕНТ И ПАРАМЕТРЫ ====================
-LEVERAGE = 5              # Кредитное плечо
-TARGET_USDT = 50.0        # Ровно 50 USDT маржи на ордер
-MAX_OPEN_ORDERS = 5       # Максимум 5 одновременных позиций
+# ==================== СТРОГИЙ МАТЕМАТИЧЕСКИЙ РИСК-МЕНЕДЖМЕНТ ====================
+LEVERAGE = 5              # Плечо 5x (золотой стандарт для баланса риска)
+MARGIN_PER_ORDER = 20.0   # Ровно 20$ маржи на ордер (позиция 100$ с плечом)
+MAX_OPEN_ORDERS = 3       # Строго не больше 3 сделок одновременно для защиты депозита 250$
 
-# Сбалансированный топ-40 ликвидных пар (достаточно широкий рынок, но без шлама)
+# 25 самых ликвидных пар (идеально для частоты сигналов без мусора)
 SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", 
     "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", 
-    "MATICUSDT", "UNIUSDT", "ATOMUSDT", "LTCUSDT", "ETCUSDT", 
-    "NEARUSDT", "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", 
-    "INJUSDT", "SUIUSDT", "RNDRUSDT", "TIAUSDT", "SEIUSDT", 
-    "IMXUSDT", "RENDERUSDT", "PEPEUSDT", "SHIBUSDT", "WIFUSDT",
-    "RENDERUSDT", "FETUSDT", "NEARUSDT", "ARUSDT", "GMTUSDT", 
-    "CRVUSDT", "LDOUSDT", "STGUSDT", "MANAUSDT", "SANDUSDT"
+    "UNIUSDT", "ATOMUSDT", "LTCUSDT", "NEARUSDT", "APTUSDT", 
+    "FTMUSDT", "ARBUSDT", "OPUSDT", "INJUSDT", "SUIUSDT", 
+    "RNDRUSDT", "TIAUSDT", "SEIUSDT", "IMXUSDT", "PEPEUSDT"
 ]
 
 def send_telegram(message):
@@ -133,27 +130,28 @@ def calculate_rsi(prices, period=14):
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
-def check_balanced_signal(symbol):
-    """Сбалансированный фильтр: ловит качественные откаты без простоя"""
+def check_optimal_signal(symbol):
+    """Сбалансированный тактический фильтр: EMA тренд + RSI откат"""
     closes = get_historical_klines(symbol, "15m", 50)
     if len(closes) < 30:
         return None
     
     current_price = closes[-1]
-    ema_20 = sum(closes[-20:]) / 20
+    ema_25 = sum(closes[-25:]) / 25
     rsi = calculate_rsi(closes, 14)
 
-    # Умеренный Лонг: цена выше скользящей, но RSI уже опустился ниже 42 (откат перед ростом)
-    if current_price > ema_20 and rsi < 42:
+    # Лонг: цена выше трендовой EMA, но RSI ушел на локальный откат (< 40)
+    if current_price > ema_25 and rsi < 40:
         return "BUY"
     
-    # Умеренный Шорт: цена ниже скользящей, а RSI поднялся выше 58 (отскок вверх в рамках тренда вниз)
-    if current_price < ema_20 and rsi > 58:
+    # Шорт: цена ниже трендовой EMA, а RSI подскочил на отскок (> 60)
+    if current_price < ema_25 and rsi > 60:
         return "SELL"
         
     return None
 
-def manage_trailing_stops():
+def manage_risk_and_trailing():
+    """Защитный менеджер: переводит в безубыток при +1.5% прибыли"""
     account_info = send_signed_request("GET", "/fapi/v2/account")
     if not account_info or 'positions' not in account_info:
         return
@@ -175,10 +173,10 @@ def manage_trailing_stops():
             is_long = position_amt > 0
             if is_long:
                 profit_pct = (current_price - entry_price) / entry_price * 100
-                if profit_pct >= 2.0: # При достижении +2% переводим в безубыток и целимся на +4%
+                if profit_pct >= 1.5: # При достижении +1.5% фиксируем безубыток
                     clean_leftover_orders(symbol)
                     new_sl = format_price(symbol, entry_price * 1.002)
-                    new_tp = format_price(symbol, entry_price * 1.04)
+                    new_tp = format_price(symbol, entry_price * 1.035)
                     
                     send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": "SELL", "type": "STOP_MARKET", "stopPrice": new_sl, "closePosition": "true"
@@ -186,13 +184,13 @@ def manage_trailing_stops():
                     send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": "SELL", "type": "TAKE_PROFIT_MARKET", "stopPrice": new_tp, "closePosition": "true"
                     })
-                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` в безубытке, цель +4%.")
+                    send_telegram(f"🛡 *Безубыток:* `{symbol}` защищен, цель ТП: +3.5%.")
             else:
                 profit_pct = (entry_price - current_price) / entry_price * 100
-                if profit_pct >= 2.0:
+                if profit_pct >= 1.5:
                     clean_leftover_orders(symbol)
                     new_sl = format_price(symbol, entry_price * 0.998)
-                    new_tp = format_price(symbol, entry_price * 0.96)
+                    new_tp = format_price(symbol, entry_price * 0.965)
                     
                     send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": "BUY", "type": "STOP_MARKET", "stopPrice": new_sl, "closePosition": "true"
@@ -200,31 +198,29 @@ def manage_trailing_stops():
                     send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": "BUY", "type": "TAKE_PROFIT_MARKET", "stopPrice": new_tp, "closePosition": "true"
                     })
-                    send_telegram(f"🛡 *Трейлинг:* `{symbol}` в безубытке, цель -4%.")
+                    send_telegram(f"🛡 *Безубыток:* `{symbol}` защищен, цель ТП: -3.5%.")
         except Exception as e:
             print(f"Ошибка трейлинга {symbol}: {e}")
 
 def bot_loop():
     time.sleep(5)
-    send_telegram(f"🚀 *Бот запущен!* Пул: 40 пар | Маржа: {TARGET_USDT}$ | Лимит сделок: {MAX_OPEN_ORDERS}")
+    send_telegram(f"🎯 *Математический снайпер запущен!* Депозит: 250$ | Маржа/ордер: {MARGIN_PER_ORDER}$ | Лимит сделок: {MAX_OPEN_ORDERS}")
     while True:
         try:
-            # 1. Всегда управляем текущими стопами
-            manage_trailing_stops()
+            # 1. Мониторим и защищаем открытые позиции
+            manage_risk_and_trailing()
             
-            # 2. Проверяем лимит активных позиций (не больше 5)
-            active_count = get_active_positions_count()
-            if active_count >= MAX_OPEN_ORDERS:
+            # 2. Строгий контроль лимита ордеров
+            if get_active_positions_count() >= MAX_OPEN_ORDERS:
                 time.sleep(30)
                 continue
             
-            # 3. Сканируем рынок в поисках возможностей
+            # 3. Сканируем 25 отобранных пар
             for symbol in SYMBOLS:
-                # Если уже набрали лимит 5 ордеров — прерываем цикл поиска
                 if get_active_positions_count() >= MAX_OPEN_ORDERS:
                     break
                     
-                signal = check_balanced_signal(symbol)
+                signal = check_optimal_signal(symbol)
                 if signal:
                     _, current_amt = get_actual_entry_price(symbol)
                     if current_amt != 0:
@@ -234,22 +230,22 @@ def bot_loop():
                     ticker = requests.get(f"{BASE_URL}/fapi/v1/ticker/price?symbol={symbol}", timeout=5).json()
                     price = float(ticker['price'])
                     
-                    # Расчет количества по 50$ маржи с учетом плеча 5x
-                    qty = round((TARGET_USDT * LEVERAGE) / price, 3)
+                    # Точный расчет количества монет под маржу 20$ с плечом 5x
+                    qty = round((MARGIN_PER_ORDER * LEVERAGE) / price, 3)
                     
                     order_res = send_signed_request("POST", "/fapi/v1/order", {
                         "symbol": symbol, "side": signal, "type": "MARKET", "quantity": qty
                     })
                     
                     if order_res and 'orderId' in order_res:
-                        # Математически выверенные цели: СЛ 2%, ТП 4% (соотношение 1 к 2)
+                        # Математически выверенные цели: СЛ 1.5%, ТП 3.5%
                         if signal == "BUY":
-                            sl_price = format_price(symbol, price * 0.98)
-                            tp_price = format_price(symbol, price * 1.04)
+                            sl_price = format_price(symbol, price * 0.985)
+                            tp_price = format_price(symbol, price * 1.035)
                             sl_side, tp_side = "SELL", "SELL"
                         else:
-                            sl_price = format_price(symbol, price * 1.02)
-                            tp_price = format_price(symbol, price * 0.96)
+                            sl_price = format_price(symbol, price * 1.015)
+                            tp_price = format_price(symbol, price * 0.965)
                             sl_side, tp_side = "BUY", "BUY"
                             
                         send_signed_request("POST", "/fapi/v1/order", {
@@ -259,9 +255,9 @@ def bot_loop():
                             "symbol": symbol, "side": tp_side, "type": "TAKE_PROFIT_MARKET", "stopPrice": tp_price, "closePosition": "true"
                         })
                         
-                        send_telegram(f"⚡ *Сделка открыта:* `{symbol}` | *{signal}* | Маржа: `{TARGET_USDT}$` | Цена: `{price}`")
+                        send_telegram(f"⚡ *Вход по системе:* `{symbol}` | *{signal}* | Маржа: `{MARGIN_PER_ORDER}$` | Цена: `{price}`")
                         
-            time.sleep(45) # Часть сканирования для более быстрых входов
+            time.sleep(45)
         except Exception as e:
             print(f"Главный цикл ошибки: {e}")
             time.sleep(10)
@@ -270,7 +266,7 @@ Thread(target=bot_loop, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "🤖 Balanced 40-Pairs Sniper Bot is Active.", 200
+    return "🤖 Mathematical Sniper Bot is Active.", 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
