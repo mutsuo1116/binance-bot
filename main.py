@@ -2141,9 +2141,9 @@ def open_live_trade(signal):
         symbol,
         tp,
         tp_direction
-    ) 
+    )
 
-try:
+    try:
 
         BINANCE.place_algo_order({
             "symbol": symbol,
