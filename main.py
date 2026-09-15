@@ -774,6 +774,20 @@ class BinanceClient:
             params
         )
 
+        def place_algo_order(self, params):
+        params = dict(params)
+
+        params.setdefault(
+            "algoType",
+            "CONDITIONAL"
+        )
+
+        return self.signed_request(
+            "POST",
+            "/fapi/v1/algoOrder",
+            params
+        )
+        
     def cancel_order(
         self,
         symbol,
@@ -2117,34 +2131,22 @@ def open_live_trade(signal):
         symbol,
         tp,
         tp_direction
-    )
+    ) то
 
-    try:
+        try:
 
         BINANCE.place_algo_order({
-    "symbol": symbol,
-    "side": sl_side,
-    "type": "STOP_MARKET",
-    "triggerPrice": stop,
-    "closePosition": "true",
-    "workingType": "MARK_PRICE",
-    "priceProtect": "false",
-    "clientAlgoId":
-        f"SNPR_SL_{int(time.time()*1000)}",
-})
+            "symbol": symbol,
+            "side": sl_side,
+            "type": "STOP_MARKET",
+            "triggerPrice": stop,
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+            "priceProtect": "false",
+            "clientAlgoId":
+                f"SNPR_SL_{int(time.time()*1000)}",
+        })
 
-    BINANCE.place_algo_order({
-    "symbol": symbol,
-    "side": order_side,
-    "type": "STOP_MARKET",
-    "triggerPrice": stop,
-    "closePosition": "true",
-    "workingType": "MARK_PRICE",
-    "priceProtect": "false",
-    "clientAlgoId":
-        f"SNPR_SL_{int(time.time()*1000)}",
-})
-    
     except Exception:
 
         logger.exception(
@@ -2794,27 +2796,27 @@ def replace_protection(
                 "down"
             )
 
-        BINANCE.place_order({
+                BINANCE.place_algo_order({
             "symbol": symbol,
-            "side": order_side,
+            "side": "SELL" if order_side in ["BUY", "LONG"] else "BUY",
             "type": "STOP_MARKET",
-            "stopPrice": stop,
+            "triggerPrice": stop,
             "closePosition": "true",
             "workingType": "MARK_PRICE",
             "priceProtect": "false",
-            "newClientOrderId":
+            "clientAlgoId":
                 f"SNPR_SL_{int(time.time()*1000)}",
         })
 
-        BINANCE.place_order({
+        BINANCE.place_algo_order({
             "symbol": symbol,
-            "side": order_side,
+            "side": "SELL" if order_side in ["BUY", "LONG"] else "BUY",
             "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": tp,
+            "triggerPrice": tp,
             "closePosition": "true",
             "workingType": "MARK_PRICE",
             "priceProtect": "false",
-            "newClientOrderId":
+            "clientAlgoId":
                 f"SNPR_TP_{int(time.time()*1000)}",
         })
 
