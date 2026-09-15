@@ -2806,7 +2806,7 @@ def replace_protection(
                 "down"
             )
 
-                BINANCE.place_algo_order({
+        BINANCE.place_algo_order({
             "symbol": symbol,
             "side": "SELL" if order_side in ["BUY", "LONG"] else "BUY",
             "type": "STOP_MARKET",
