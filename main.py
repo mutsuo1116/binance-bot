@@ -776,19 +776,6 @@ class BinanceClient:
         
 class BinanceClient:
 
-    def place_order(self, params):
-        return self.signed_request(
-            "POST",
-            "/fapi/v1/order",
-            params
-        )
-
-    def place_algo_order(self, params):
-        params = dict(params)
-
-        params.setdefault(
-class BinanceClient:
-
     def __init__(self):
         self.session = requests.Session()
 
