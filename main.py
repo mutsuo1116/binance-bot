@@ -2141,7 +2141,7 @@ def open_live_trade(signal):
         symbol,
         tp,
         tp_direction
-    ) то
+    ) 
 
         try:
 
