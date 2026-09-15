@@ -1041,6 +1041,20 @@ class BinanceClient:
             params
         )
 
+        def place_algo_order(self, params):
+        params = dict(params)
+
+        params.setdefault(
+            "algoType",
+            "CONDITIONAL"
+        )
+
+        return self.signed_request(
+            "POST",
+            "/fapi/v1/algoOrder",
+            params
+        )
+
     def cancel_order(
         self,
         symbol,
@@ -1066,6 +1080,7 @@ class BinanceClient:
 
 
 BINANCE = BinanceClient()
+
 
 
 # ============================================================
