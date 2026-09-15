@@ -774,7 +774,9 @@ class BinanceClient:
             params
         )
 
-        def place_algo_order(self, params):
+        class BinanceClient:
+
+    def place_algo_order(self, params):
         params = dict(params)
 
         params.setdefault(
@@ -787,12 +789,13 @@ class BinanceClient:
             "/fapi/v1/algoOrder",
             params
         )
-        
+
     def cancel_order(
         self,
         symbol,
         order_id
     ):
+        
         return self.signed_request(
             "DELETE",
             "/fapi/v1/order",
