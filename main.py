@@ -787,6 +787,250 @@ class BinanceClient:
         params = dict(params)
 
         params.setdefault(
+class BinanceClient:
+
+    def __init__(self):
+        self.session = requests.Session()
+
+        if BINANCE_API_KEY:
+            self.session.headers.update({
+                "X-MBX-APIKEY": BINANCE_API_KEY
+            })
+
+    def sync_server_time(self):
+        global BINANCE_TIME_OFFSET
+
+        data = self.public_get(
+            "/fapi/v1/time"
+        )
+
+        server_time = int(
+            data["serverTime"]
+        )
+
+        local_time = int(
+            time.time() * 1000
+        )
+
+        BINANCE_TIME_OFFSET = (
+            server_time - local_time
+        )
+
+    def public_get(
+        self,
+        path,
+        params=None
+    ):
+        url = BINANCE_BASE_URL + path
+
+        response = self.session.get(
+            url,
+            params=params or {},
+            timeout=15
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Binance {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+
+        return response.json()
+
+    def signed_request(
+        self,
+        method,
+        path,
+        params=None
+    ):
+        params = dict(params or {})
+
+        params["timestamp"] = (
+            int(time.time() * 1000)
+            + BINANCE_TIME_OFFSET
+        )
+
+        params.setdefault(
+            "recvWindow",
+            10000
+        )
+
+        query = urlencode(
+            params,
+            doseq=True
+        )
+
+        signature = hmac.new(
+            BINANCE_SECRET_KEY.encode(),
+            query.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        params["signature"] = signature
+
+        url = BINANCE_BASE_URL + path
+
+        if method.upper() == "GET":
+            response = self.session.get(
+                url,
+                params=params,
+                timeout=15
+            )
+
+        elif method.upper() == "POST":
+            response = self.session.post(
+                url,
+                params=params,
+                timeout=15
+            )
+
+        elif method.upper() == "DELETE":
+            response = self.session.delete(
+                url,
+                params=params,
+                timeout=15
+            )
+
+        else:
+            raise ValueError(
+                f"Unsupported method {method}"
+            )
+
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Binance {response.status_code}: "
+                f"{response.text[:800]}"
+            )
+
+        return response.json()
+
+    def get_exchange_info(self):
+        return self.public_get(
+            "/fapi/v1/exchangeInfo"
+        )
+
+    def get_klines(
+        self,
+        symbol,
+        interval,
+        limit=150
+    ):
+        return self.public_get(
+            "/fapi/v1/klines",
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "limit": limit,
+            }
+        )
+
+    def get_price(self, symbol):
+        data = self.public_get(
+            "/fapi/v1/ticker/price",
+            {
+                "symbol": symbol
+            }
+        )
+
+        return float(
+            data["price"]
+        )
+
+    def get_funding(self, symbol):
+        try:
+            data = self.public_get(
+                "/fapi/v1/premiumIndex",
+                {
+                    "symbol": symbol
+                }
+            )
+
+            return float(
+                data.get(
+                    "lastFundingRate",
+                    0
+                )
+            )
+
+        except Exception:
+            return 0.0
+
+    def get_account(self):
+        return self.signed_request(
+            "GET",
+            "/fapi/v2/account"
+        )
+
+    def get_equity(self):
+        account = self.get_account()
+
+        return float(
+            account.get(
+                "totalWalletBalance",
+                0
+            )
+        )
+
+    def get_position_risk(self):
+        return self.signed_request(
+            "GET",
+            "/fapi/v2/positionRisk"
+        )
+
+    def get_open_orders(self, symbol=None):
+        params = {}
+
+        if symbol:
+            params["symbol"] = symbol
+
+        return self.signed_request(
+            "GET",
+            "/fapi/v1/openOrders",
+            params
+        )
+
+    def set_leverage(
+        self,
+        symbol,
+        leverage
+    ):
+        return self.signed_request(
+            "POST",
+            "/fapi/v1/leverage",
+            {
+                "symbol": symbol,
+                "leverage": leverage,
+            }
+        )
+
+    def set_margin_type(self, symbol):
+        try:
+            return self.signed_request(
+                "POST",
+                "/fapi/v1/marginType",
+                {
+                    "symbol": symbol,
+                    "marginType": "ISOLATED",
+                }
+            )
+
+        except Exception as e:
+            if "-4046" in str(e):
+                return None
+
+            raise
+
+    def place_order(self, params):
+        return self.signed_request(
+            "POST",
+            "/fapi/v1/order",
+            params
+        )
+
+    def place_algo_order(self, params):
+        params = dict(params)
+
+        params.setdefault(
             "algoType",
             "CONDITIONAL"
         )
@@ -802,7 +1046,6 @@ class BinanceClient:
         symbol,
         order_id
     ):
-        
         return self.signed_request(
             "DELETE",
             "/fapi/v1/order",
