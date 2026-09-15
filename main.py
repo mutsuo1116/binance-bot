@@ -773,8 +773,8 @@ class BinanceClient:
             "/fapi/v1/order",
             params
         )
-
-        class BinanceClient:
+        
+class BinanceClient:
 
     def place_order(self, params):
         return self.signed_request(
