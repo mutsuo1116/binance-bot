@@ -1029,7 +1029,7 @@ class BinanceClient:
         )
 
         def place_algo_order(self, params):
-        params = dict(params)
+          йparams = dict(params)
 
         params.setdefault(
             "algoType",
